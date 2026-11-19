@@ -1,0 +1,21 @@
+# Java compiled files
+*.class
+bin/
+out/
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Visual Studio Code
+.history/
+
+# Temporary files
+*.tmp
+*.log
