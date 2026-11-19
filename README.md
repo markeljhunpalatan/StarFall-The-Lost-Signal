@@ -1,8 +1,12 @@
-# Galaxy Shooter
+
+# STARLIGHT RESCUE
 
 ## Project Overview
-A Java Swing-based space shooter game developed
-for our Object-Oriented Programming project.
+Starlight Rescue is an original 2D side-view space shooter game developed using Java Swing.
+
+The story follows an ordinary office worker whose wife mysteriously disappears after an alien spacecraft arrives on Earth.
+
+He embarks on a dangerous space mission to defend humanity, rescue his wife, and return home.
 
 ## Development Environment
 - Programming Language: Java
@@ -13,21 +17,14 @@ for our Object-Oriented Programming project.
 ## Core Gameplay Features
 - Vertical spaceship movement
 - Shooting mechanics
-- Asteroids and alien enemies
-- Scrap collection
+- Asteroid and alien enemies
+- Scrap collection system
 - Weapon crafting and upgrades
 - Spaceship upgrades
 - Mission progression
-- Final boss encounter
-- Storyline and ending
-
-## OOP Requirements
-- Encapsulation
-- Inheritance
-- Polymorphism
-- Abstraction
-- Event Handling
-- Error Handling
+- Alien mothership final boss
+- Wife rescue sequence
+- Wormhole and return-to-Earth ending
 
 ## Submission Deadline
 December 15, 2026
