@@ -5,15 +5,18 @@ import javax.swing.JFrame;
 
 public class GameFrame extends JFrame {
 
-    public GameFrame() {
+    GameFrame() {
 
-        setTitle("Starlight Rescue");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setResizable(false);
+        GamePanel gamePanel = new GamePanel();
 
-        setContentPane(new GamePanel());
+        this.add(gamePanel);
+        this.setTitle("Starlight Rescue");
+        this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        this.setResizable(false);
+        this.pack();
+        this.setLocationRelativeTo(null);
+        this.setVisible(true);
 
-        pack();
-        setLocationRelativeTo(null);
     }
+
 }
