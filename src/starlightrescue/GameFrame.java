@@ -1,4 +1,3 @@
-
 package starlightrescue;
 
 import javax.swing.JFrame;
@@ -10,7 +9,7 @@ public class GameFrame extends JFrame {
         GamePanel gamePanel = new GamePanel();
 
         this.add(gamePanel);
-        this.setTitle("Starlight Rescue");
+        this.setTitle("STARFALL: THE LOST SIGNAL");
         this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         this.setResizable(false);
         this.pack();
