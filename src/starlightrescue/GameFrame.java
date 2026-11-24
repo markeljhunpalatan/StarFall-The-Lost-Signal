@@ -9,12 +9,14 @@ public class GameFrame extends JFrame {
         GamePanel gamePanel = new GamePanel();
 
         this.add(gamePanel);
-        this.setTitle("STARFALL: THE LOST SIGNAL");
+        this.setTitle(Story.WINDOW_TITLE);
         this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         this.setResizable(false);
         this.pack();
         this.setLocationRelativeTo(null);
         this.setVisible(true);
+
+        gamePanel.requestFocusInWindow();
 
     }
 

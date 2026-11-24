@@ -1,6 +1,6 @@
-
 package starlightrescue;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -16,10 +16,14 @@ public class Player {
     private final int WIDTH = 60;
     private final int HEIGHT = 40;
 
-    private final int SPEED = 5;
+    private final int SPEED = 6;
 
     private boolean movingUp;
     private boolean movingDown;
+
+    private boolean blinking;   // flickers while the ship is briefly invulnerable
+    private boolean shielded;   // draws the shield bubble
+    private int tick = 0;       // animation counter
 
     public Player() {
 
@@ -30,17 +34,28 @@ public class Player {
 
     public void update() {
 
-        if (movingUp && y > 0) {
+        tick++;
+
+        if (movingUp) {
             y -= SPEED;
         }
 
-        if (movingDown && y < 600 - HEIGHT) {
+        if (movingDown) {
             y += SPEED;
         }
+
+        // Stay inside the play field (below the HUD, above the bottom edge)
+        y = Math.max(GamePanel.PLAY_TOP,
+                     Math.min(GamePanel.SCREEN_HEIGHT - HEIGHT, y));
 
     }
 
     public void draw(Graphics g) {
+
+        // While invulnerable the ship blinks
+        if (blinking && (tick / 4) % 2 == 0) {
+            return;
+        }
 
         Graphics2D g2 = (Graphics2D) g.create();
 
@@ -49,16 +64,28 @@ public class Player {
             RenderingHints.VALUE_ANTIALIAS_ON
         );
 
-        // Engine flame
+        // Engine flame (flickers)
+        int flicker = (tick / 2) % 3;
+
         g2.setColor(Color.ORANGE);
 
         Polygon flame = new Polygon(
-            new int[]{x, x - 15, x},
+            new int[]{x, x - 12 - flicker * 4, x},
             new int[]{y + 12, y + 20, y + 28},
             3
         );
 
         g2.fillPolygon(flame);
+
+        g2.setColor(Color.YELLOW);
+
+        Polygon innerFlame = new Polygon(
+            new int[]{x, x - 6 - flicker * 2, x},
+            new int[]{y + 16, y + 20, y + 24},
+            3
+        );
+
+        g2.fillPolygon(innerFlame);
 
         // Main spaceship body
         g2.setColor(new Color(30, 144, 255));
@@ -137,6 +164,17 @@ public class Player {
             5
         );
 
+        // Shield bubble
+        if (shielded) {
+
+            g2.setColor(new Color(80, 220, 255, 55));
+            g2.fillOval(x - 12, y - 12, WIDTH + 24, HEIGHT + 24);
+
+            g2.setStroke(new BasicStroke(2f));
+            g2.setColor(new Color(150, 240, 255, 130 + (int) (Math.sin(tick * 0.2) * 60)));
+            g2.drawOval(x - 12, y - 12, WIDTH + 24, HEIGHT + 24);
+        }
+
         g2.dispose();
 
     }
@@ -153,6 +191,18 @@ public class Player {
 
     }
 
+    public void setBlinking(boolean blinking) {
+
+        this.blinking = blinking;
+
+    }
+
+    public void setShielded(boolean shielded) {
+
+        this.shielded = shielded;
+
+    }
+
     public int getBulletX() {
 
         return x + WIDTH;
@@ -165,9 +215,22 @@ public class Player {
 
     }
 
+    public int getCenterX() {
+
+        return x + WIDTH / 2;
+
+    }
+
+    public int getCenterY() {
+
+        return y + HEIGHT / 2;
+
+    }
+
+    /** A slightly smaller hitbox than the drawing, so near-misses feel fair. */
     public Rectangle getBounds() {
 
-        return new Rectangle(x, y, WIDTH, HEIGHT);
+        return new Rectangle(x + 6, y + 8, WIDTH - 12, HEIGHT - 16);
 
     }
 
