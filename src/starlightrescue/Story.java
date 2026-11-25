@@ -78,9 +78,9 @@ public final class Story {
         // After Mission 1: EARTH DEFENSE
         {
             new Page("EARTH IS SAFE - FOR NOW", Art.EARTH,
-                "The first wave breaks apart in the dark. Earth glows quietly behind "
-              + "him, untouched. But the surviving aliens are all retreating in "
-              + "one direction."),
+                "The alien commander's ship breaks apart in the dark. Earth glows "
+              + "quietly behind him, untouched. But the surviving aliens are all "
+              + "retreating in one direction."),
             new Page("THE SIGNAL", Art.NONE,
                 "A faint pulse crackles from the wreckage - the same pattern he saw in "
               + "the light that night. \"Follow it,\" says the voice from the launch "
@@ -90,8 +90,9 @@ public final class Story {
         // After Mission 2: DEEP-SPACE PURSUIT
         {
             new Page("DEEP SPACE", Art.NONE,
-                "Earth shrinks to a pale blue dot, then to nothing at all. The signal "
-              + "grows stronger. Something enormous is waiting ahead, hidden in the dark."),
+                "The warship burns out behind him. Earth shrinks to a pale blue dot, "
+              + "then to nothing at all. The signal grows stronger. Something enormous "
+              + "is waiting ahead, hidden in the dark."),
             new Page("THE MOTHERSHIP", Art.MOTHERSHIP,
                 "There. The same ship that took her. \"All power to weapons,\" he "
               + "whispers. \"I'm coming.\"")
