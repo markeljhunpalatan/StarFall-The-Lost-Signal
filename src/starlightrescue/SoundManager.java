@@ -8,8 +8,10 @@ import javax.sound.sampled.SourceDataLine;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Plays every sound effect and the background music.
@@ -33,7 +35,10 @@ public final class SoundManager {
         TELEPORT, REFUND, UNDO, MISSION_COMPLETE, GAME_OVER, VICTORY
     }
 
-    public enum Track { NONE, MENU, GAME, BOSS }
+    // OPENING plays on the opening screen, the story pages and the ending; MENU on every menu.
+    // Each battle mode has its own track: LEVEL missions by difficulty, then Adventure and Hardcore.
+    // BOSS_FIGHT takes over in Adventure and Hardcore while a boss is on screen.
+    public enum Track { NONE, OPENING, MENU, LEVEL_EASY, LEVEL_MODERATE, LEVEL_HARD, ADVENTURE, HARDCORE, BOSS_FIGHT }
 
     private static final int CHUNK = 512;                 // samples mixed per step
     private static final int MAX_SAME_SOUND = 3;          // limit overlapping copies of one effect
@@ -72,6 +77,11 @@ public final class SoundManager {
     private final short[][] sfxData = new short[Sfx.values().length][];
     private final short[][] musicData = new short[Track.values().length][];
 
+    // The built shot sounds (by ShotSound.key()) and boss sounds, and the effects a WAV file replaces
+    private final Map<Integer, short[]> shotData = new HashMap<>();
+    private final Map<Integer, short[]> bossData = new HashMap<>();
+    private final boolean[] customSfx = new boolean[Sfx.values().length];
+
     private volatile boolean available = false;
     private volatile boolean soundOn = true;
     private volatile boolean musicOn = true;
@@ -106,6 +116,88 @@ public final class SoundManager {
         if (data == null || data.length == 0) {
             return;
         }
+
+        addVoice(data, sfx);
+    }
+
+    /**
+     * Plays the sound of one shot: its gun, and the ship's class, caliber and cannon
+     * condition (see ShotSound). A shoot.wav or laser.wav in resources/sounds replaces
+     * the built-in shot sounds, so every shot uses that one file.
+     */
+    public void playShot(ShotSound shot) {
+
+        if (!available || !soundOn) {
+            return;
+        }
+
+        boolean beam = shot.gun == ShotSound.Gun.BEAM;
+        short[] data;
+
+        if (beam && customSfx[Sfx.LASER.ordinal()]) {
+            data = sfxData[Sfx.LASER.ordinal()];
+        } else if (!beam && customSfx[Sfx.SHOOT.ordinal()]) {
+            data = sfxData[Sfx.SHOOT.ordinal()];
+        } else {
+            data = shotSound(shot);
+        }
+
+        if (data == null || data.length == 0) {
+            return;
+        }
+
+        addVoice(data, beam ? Sfx.LASER : Sfx.SHOOT);
+    }
+
+    /** The built sound for one kind of shot. Each kind is built the first time it is needed, then kept. */
+    private synchronized short[] shotSound(ShotSound shot) {
+
+        int key = shot.key();
+        short[] data = shotData.get(key);
+
+        if (data == null) {
+            data = SoundSynth.shot(shot);
+            shotData.put(key, data);
+        }
+
+        return data;
+    }
+
+    /**
+     * Plays a boss's own version of a sound effect: each boss design has its own voice
+     * (see SoundSynth.bossSfx). A WAV file in resources/sounds still replaces the effect.
+     */
+    public void playBoss(Sfx sfx, int design) {
+
+        if (!available || !soundOn) {
+            return;
+        }
+
+        short[] data = customSfx[sfx.ordinal()] ? sfxData[sfx.ordinal()] : bossSound(sfx, design);
+
+        if (data == null || data.length == 0) {
+            return;
+        }
+
+        addVoice(data, sfx);
+    }
+
+    /** One boss's version of an effect. Each is built the first time it is needed, then kept. */
+    private synchronized short[] bossSound(Sfx sfx, int design) {
+
+        int key = Math.floorMod(design, Boss.DESIGN_COUNT) * 100 + sfx.ordinal();
+        short[] data = bossData.get(key);
+
+        if (data == null) {
+            data = SoundSynth.bossSfx(sfx, design);
+            bossData.put(key, data);
+        }
+
+        return data;
+    }
+
+    /** Adds a sound to the mix, unless too many copies of the same effect are already playing. */
+    private void addVoice(short[] data, Sfx sfx) {
 
         synchronized (voices) {
 
@@ -288,8 +380,9 @@ public final class SoundManager {
     private void loadAll() {
 
         for (Sfx sfx : Sfx.values()) {
-            sfxData[sfx.ordinal()] = loadSound(sfx.name().toLowerCase(),
-                                               SoundSynth.sfx(sfx));
+            String name = sfx.name().toLowerCase();
+            customSfx[sfx.ordinal()] = new File(SOUND_FOLDER + name + ".wav").exists();
+            sfxData[sfx.ordinal()] = loadSound(name, SoundSynth.sfx(sfx));
         }
 
         for (Track track : Track.values()) {

@@ -3,19 +3,22 @@ package starlightrescue;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 
 /**
- * An enemy shot. There are four kinds:
+ * An enemy shot. There are five kinds:
  *
  * BOSS    - a big red energy shot
  * ALIEN   - a small orange shot from an armed alien
  * RING    - a violet orb from the Mothership's energy ring
  * MISSILE - a homing missile from the Warship. It steers toward you, but you
  *           can shoot it down. It fizzles out after a few seconds.
+ * FIST    - the golem's rocket fist. It works exactly like a missile.
  */
 public class BossBullet {
 
-    public enum Style { BOSS, ALIEN, RING, MISSILE }
+    public enum Style { BOSS, ALIEN, RING, MISSILE, FIST }
 
     private double x;
     private double y;
@@ -59,8 +62,17 @@ public class BossBullet {
 
     /** A homing missile. angle is its starting direction (Math.PI = straight left). */
     public static BossBullet missile(double x, double y, double angle) {
+        return homing(x, y, angle, Style.MISSILE);
+    }
 
-        BossBullet m = new BossBullet(x, y, 0, 0, 0.8, Style.MISSILE);
+    /** The golem's rocket fist, launched with its middle at (cx, cy). It homes in like a missile. */
+    public static BossBullet rocketFist(double cx, double cy, double angle) {
+        return homing(cx - 8, cy - 5, angle, Style.FIST);
+    }
+
+    private static BossBullet homing(double x, double y, double angle, Style style) {
+
+        BossBullet m = new BossBullet(x, y, 0, 0, 0.8, style);
         m.angle = angle;
         m.speed = 3.4;
         m.life = 330;
@@ -78,7 +90,7 @@ public class BossBullet {
 
         tick++;
 
-        if (style == Style.MISSILE) {
+        if (isMissile()) {
 
             life--;
 
@@ -98,18 +110,28 @@ public class BossBullet {
         y += vy;
     }
 
+    /** Homing missiles and the golem's rocket fists. */
     public boolean isMissile() {
-        return style == Style.MISSILE;
+        return style == Style.MISSILE || style == Style.FIST;
     }
 
     /** Missiles can be shot down by the player. */
     public boolean isDestroyable() {
-        return style == Style.MISSILE;
+        return isMissile();
     }
 
     /** A missile that ran out of fuel (the game shows a small puff). */
     public boolean isExpired() {
-        return style == Style.MISSILE && life <= 0;
+        return isMissile() && life <= 0;
+    }
+
+    public Style getStyle() {
+        return style;
+    }
+
+    /** How fast it is moving up (negative) or down (positive). */
+    public double getVy() {
+        return vy;
     }
 
     public int getCenterX() {
@@ -120,10 +142,53 @@ public class BossBullet {
         return (int) y + height / 2;
     }
 
+    // ---------- Pictures (the fire bullets in resources/sprites/enemy-bullets) ----------
+
+    /** The picture for a kind of shot, or null if the art is missing (the shapes are drawn instead). */
+    private static BufferedImage picture(Style style) {
+        switch (style) {
+            case ALIEN:   return Sprites.get("enemy-bullets/alien_orb.png");
+            case RING:    return Sprites.get("enemy-bullets/ring_orb.png");
+            case MISSILE: return Sprites.get("enemy-bullets/missile.png");
+            default:      return Sprites.get("enemy-bullets/boss_orb.png");
+        }
+    }
+
+    /** How big the picture is drawn: boss shots are the biggest, alien shots the smallest. */
+    private int pictureSize() {
+        switch (style) {
+            case ALIEN:  return 16;
+            case RING:   return 18;
+            case MISSILE: return 18;
+            default:     return 26;
+        }
+    }
+
+    /** The burst played when a shot hits something or is shot down. */
+    public static BufferedImage[] burstFrames() {
+        BufferedImage burst = Sprites.get("enemy-bullets/burst.png");
+        return burst == null ? new BufferedImage[0] : new BufferedImage[]{burst};
+    }
+
     public void draw(Graphics2D g2) {
 
-        if (style == Style.MISSILE) {
+        if (style == Style.FIST && drawFist(g2)) {
+            return;
+        }
+
+        if (isMissile()) {
             drawMissile(g2);
+            return;
+        }
+
+        BufferedImage picture = picture(style);
+
+        if (picture != null) {
+            Graphics2D g = (Graphics2D) g2.create();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            int size = pictureSize();
+            g.drawImage(picture, getCenterX() - size / 2, getCenterY() - size / 2, size, size, null);
+            g.dispose();
             return;
         }
 
@@ -159,7 +224,47 @@ public class BossBullet {
                     width * 35 / 100, height / 2);
     }
 
+    /** The golem's glowing rocket fist, pointing where it flies. False if its picture is missing. */
+    private boolean drawFist(Graphics2D g0) {
+
+        BufferedImage picture = GolemArt.armFrame(tick);
+
+        if (picture == null) {
+            return false;
+        }
+
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.translate(getCenterX(), getCenterY());
+        g.rotate(angle);
+
+        // The picture points right; flying left it would be upside down, so it is flipped back
+        if (Math.cos(angle) < 0) {
+            g.scale(1, -1);
+        }
+
+        int w = picture.getWidth() * 2;
+        int h = picture.getHeight() * 2;
+        g.drawImage(picture, -w / 2, -h / 2, w, h, null);
+        g.dispose();
+        return true;
+    }
+
     private void drawMissile(Graphics2D g0) {
+
+        BufferedImage picture = picture(Style.MISSILE);
+
+        if (picture != null) {
+            // The picture points up and to the right, so it is turned by a quarter more than its heading
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            g.translate(getCenterX(), getCenterY());
+            g.rotate(angle + Math.PI / 4);
+            int size = pictureSize();
+            g.drawImage(picture, -size / 2, -size / 2, size, size, null);
+            g.dispose();
+            return;
+        }
 
         Graphics2D g2 = (Graphics2D) g0.create();
         g2.translate(x + width / 2.0, y + height / 2.0);
@@ -204,6 +309,10 @@ public class BossBullet {
 
         if (style == Style.MISSILE) {
             return new Rectangle(getCenterX() - 6, getCenterY() - 6, 12, 12);
+        }
+
+        if (style == Style.FIST) {
+            return new Rectangle(getCenterX() - 9, getCenterY() - 7, 18, 14);   // the fist is a bit bigger
         }
 
         return new Rectangle((int) x, (int) y, width, height);

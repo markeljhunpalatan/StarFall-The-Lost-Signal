@@ -89,6 +89,9 @@ public final class Story {
 
         // After Mission 2: DEEP-SPACE PURSUIT
         {
+            new Page("A TRAP", Art.NONE,
+                "The fleeing ships were bait. Halfway through the chase they turned as one, "
+              + "and the guns in the dark woke up. The signal had been leading him here all along."),
             new Page("DEEP SPACE", Art.NONE,
                 "The warship burns out behind him. Earth shrinks to a pale blue dot, "
               + "then to nothing at all. The signal grows stronger. Something enormous "
@@ -108,15 +111,15 @@ public final class Story {
               + "sleeping. For the first time in months, he can breathe."),
             new Page("THE WORMHOLE", Art.WORMHOLE,
                 "Then the dying ship tears space open. A wormhole yawns ahead - "
-              + "unstable, hungry, and the only road home. \"Hold on,\" he says. "
-              + "\"We're going back.\"")
+              + "unstable, hungry, and the only road home. Deep in its light, something "
+              + "made of stone is stirring. \"Hold on,\" he says. \"We're going back.\"")
         },
 
         // After Mission 4: THE WORMHOLE (ending)
         {
             new Page("THE WAY HOME", Art.WORMHOLE,
-                "The ship shudders through the wormhole's light - and then, "
-              + "impossibly, there is blue below them. Earth."),
+                "The stone giant crumbles into the light, and the way is open. The ship "
+              + "shudders through the wormhole - and then, impossibly, there is blue below them. Earth."),
             new Page("HOME", Art.EARTH,
                 "Dawn breaks over the city. No one will ever believe where they have "
               + "been, but this time he does not need them to. She is with him. "

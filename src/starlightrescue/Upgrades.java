@@ -46,10 +46,7 @@ public class Upgrades {
     };
 
     // ---- Phase 1 effects ----
-    private static final String[] WEAPON_NAMES = {"Single shot", "Twin shot", "Triple spread", "5-way spread"};
-    private static final int[] BULLETS = {1, 2, 3, 5};
-    /** Damage of ONE bullet. More bullets per volley = less damage per bullet (the cannon nerf). */
-    private static final int[] BULLET_DAMAGE = {10, 7, 6, 5};
+    // (The weapons themselves, with their damage and volleys, are in Weapon.java)
     private static final int[] AMMO_MAX = {36, 48, 62, 80};
     private static final int[] RELOAD_TICKS = {120, 105, 90, 75};       // 60 ticks = 1 second
     private static final int[] SPEED = {6, 7, 8};
@@ -67,6 +64,7 @@ public class Upgrades {
 
     private final int[] level = START.clone();
     private int credits = 0;
+    private int xp = 0;                 // experience: earned by playing, it sets your player level
 
     /** A ready-made ship, used by LEVEL mode so every difficulty has a fixed loadout. */
     public static Upgrades preset(int cannons, int ammo, int engines, int hull) {
@@ -117,13 +115,29 @@ public class Upgrades {
     // ---------- Effects ----------
 
     public int getWeaponLevel()      { return Math.min(level[CANNONS], PHASE1[CANNONS]); }
-    public int getBulletsPerVolley() { return BULLETS[getWeaponLevel() - 1]; }
+    /** CANNONS fully upgraded: the omega volley (all four guns at once). */
+    public boolean omegaVolley() { return isMaxed(CANNONS); }
+
+    /** Shots in one volley: seven for the omega volley, otherwise the weapon's own count. */
+    public int getBulletsPerVolley() { return omegaVolley() ? 7 : Weapon.forLevel(getWeaponLevel()).volleys; }
     public int getCaliberLevel()     { return phase2Level(CANNONS); }
-    public int getBulletDamage()     { return bulletDamageFor(getWeaponLevel()); }
+
+    /** The extra damage the CANNONS MK II upgrade adds to each shot at this caliber level. */
+    public static int caliberBonus(int caliberLevel) {
+        return CALIBER_BONUS[Math.max(0, Math.min(CALIBER_BONUS.length - 1, caliberLevel))];
+    }
+    public int getBulletDamage() {
+        if (omegaVolley()) {
+            // Average damage of the seven shots of the omega volley
+            int total = Weapon.PLASMA.damage + 2 * Weapon.ARC.damage + Weapon.FIREBALL.damage + 3 * Weapon.COMET.damage;
+            return total / 7 + CALIBER_BONUS[getCaliberLevel()];
+        }
+        return bulletDamageFor(getWeaponLevel());
+    }
 
     /** Damage per bullet when firing a given pattern (1 - 4). */
     public int bulletDamageFor(int weaponLevel) {
-        return BULLET_DAMAGE[weaponLevel - 1] + CALIBER_BONUS[getCaliberLevel()];
+        return Weapon.forLevel(weaponLevel).damage + CALIBER_BONUS[getCaliberLevel()];
     }
 
     public int getAmmoLevel()     { return Math.min(level[AMMO], PHASE1[AMMO]); }
@@ -197,10 +211,73 @@ public class Upgrades {
         return !isMaxed(track) && credits >= nextCost(track);
     }
 
+    /** Enough credits AND a high enough player level for the next step. */
+    public boolean canBuy(int track) {
+        return canAfford(track) && levelMet(track);
+    }
+
+    // ---------- Player level (from experience) ----------
+
+    /** The player level each purchase step needs (same order as COSTS). */
+    private static final int[][] LEVEL_NEEDED = {
+        {1, 2, 3, 4, 6, 8},     // cannons
+        {1, 2, 3, 5, 7, 9},     // ammo core
+        {1, 3, 5, 7, 9},        // engines
+        {1, 3, 5, 7, 9}         // hull armor
+    };
+
+    /** The experience needed to reach each player level (index 0 = level 1). */
+    public static final int[] LEVEL_XP = {0, 120, 300, 560, 900, 1350, 1900, 2600, 3500, 4600};
+
+    public static final int MAX_PLAYER_LEVEL = LEVEL_XP.length;
+
+    public int getXp() {
+        return xp;
+    }
+
+    public void addXp(int amount) {
+        xp = Math.max(0, xp + amount);
+    }
+
+    /** Your player level (1 - 10), from the experience you have earned in this mode. */
+    public int playerLevel() {
+
+        int lvl = 1;
+
+        for (int i = 1; i < LEVEL_XP.length; i++) {
+            if (xp >= LEVEL_XP[i]) {
+                lvl = i + 1;
+            }
+        }
+
+        return lvl;
+    }
+
+    /** Experience still needed for the next player level (0 at the top level). */
+    public int xpToNextLevel() {
+
+        int lvl = playerLevel();
+
+        if (lvl >= MAX_PLAYER_LEVEL) {
+            return 0;
+        }
+
+        return LEVEL_XP[lvl] - xp;
+    }
+
+    /** The player level the next step of a track needs (0 once the track is maxed). */
+    public int levelNeeded(int track) {
+        return isMaxed(track) ? 0 : LEVEL_NEEDED[track][level[track] - START[track]];
+    }
+
+    public boolean levelMet(int track) {
+        return playerLevel() >= levelNeeded(track);
+    }
+
     /** Buys the next level of a track. Returns true if it worked. */
     public boolean buy(int track) {
 
-        if (!canAfford(track)) {
+        if (!canBuy(track)) {
             return false;
         }
 
@@ -252,23 +329,67 @@ public class Upgrades {
 
     // ---------- Saving ----------
 
-    /** Writes the wallet and upgrade levels into the save data. */
-    public void save(Properties data) {
+    /**
+     * Writes the wallet and upgrade levels into the save data. Each game mode has
+     * its own profile, so the keys start with that mode's prefix (for example "adventure.").
+     */
+    public void save(Properties data, String prefix) {
 
-        data.setProperty("wallet", String.valueOf(credits));
+        data.setProperty(prefix + "wallet", String.valueOf(credits));
+        data.setProperty(prefix + "xp", String.valueOf(xp));
 
         for (int t = 0; t < TRACKS; t++) {
-            data.setProperty("upgrade." + KEYS[t], String.valueOf(level[t]));
+            data.setProperty(prefix + "upgrade." + KEYS[t], String.valueOf(level[t]));
         }
     }
 
     /** Reads the wallet and upgrade levels back (bad or missing values use the defaults). */
-    public void load(Properties data) {
+    public void load(Properties data, String prefix) {
 
-        credits = parse(data.getProperty("wallet"), 0);
+        credits = parse(data.getProperty(prefix + "wallet"), 0);
+        xp = parse(data.getProperty(prefix + "xp"), 0);
 
         for (int t = 0; t < TRACKS; t++) {
-            level[t] = clamp(t, parse(data.getProperty("upgrade." + KEYS[t]), START[t]));
+            level[t] = clamp(t, parse(data.getProperty(prefix + "upgrade." + KEYS[t]), START[t]));
+        }
+    }
+
+    /** True when every track is at its top level (phase 2 maxed out). */
+    public boolean isFullyUpgraded() {
+
+        for (int t = 0; t < TRACKS; t++) {
+            if (!isMaxed(t)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** Total credits paid for the levels this ship has now. */
+    public int creditsSpent() {
+
+        int total = 0;
+
+        for (int t = 0; t < TRACKS; t++) {
+            for (int lvl = START[t]; lvl < level[t]; lvl++) {
+                total += COSTS[t][lvl - START[t]];
+            }
+        }
+
+        return total;
+    }
+
+    /**
+     * Takes every upgrade on this ship back to a brand new ship. The full price
+     * paid for them is refunded, so a reset costs nothing but the time spent.
+     */
+    public void resetUpgrades() {
+
+        credits += creditsSpent();
+
+        for (int t = 0; t < TRACKS; t++) {
+            level[t] = START[t];
         }
     }
 
@@ -276,6 +397,7 @@ public class Upgrades {
     public void reset() {
 
         credits = 0;
+        xp = 0;
 
         for (int t = 0; t < TRACKS; t++) {
             level[t] = START[t];
@@ -302,7 +424,10 @@ public class Upgrades {
 
             case CANNONS:
                 if (p2 == 0) {
-                    return WEAPON_NAMES[p1 - 1] + ", " + BULLET_DAMAGE[p1 - 1] + " damage each";
+                    return Weapon.forLevel(p1).title + ", " + Weapon.forLevel(p1).damage + " damage each";
+                }
+                if (p2 >= 3) {
+                    return "Omega volley: all four guns fire together";
                 }
                 return "+" + CALIBER_BONUS[p2] + " damage per bullet";
 

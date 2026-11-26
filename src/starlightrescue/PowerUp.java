@@ -8,7 +8,7 @@ import java.awt.Rectangle;
 /** A pickup that floats left across the screen. Fly into it to collect it. */
 public class PowerUp {
 
-    public enum Type { REPAIR, RAPID_FIRE, SHIELD }
+    public enum Type { REPAIR, RAPID_FIRE, SHIELD, LASER }
 
     public static final int SIZE = 28;
 
@@ -58,6 +58,9 @@ public class PowerUp {
             case RAPID_FIRE:
                 base = new Color(255, 170, 30);
                 break;
+            case LASER:
+                base = new Color(200, 90, 255);
+                break;
             default:
                 base = new Color(50, 190, 255);
                 break;
@@ -92,6 +95,12 @@ public class PowerUp {
                     new int[]{cy - 5 * u, cy + u / 2, cy + u / 2, cy + 5 * u, cy - u / 2, cy - u / 2},
                     6
                 );
+                break;
+
+            case LASER:
+                // A beam with an emitter at one end
+                g2.fillRect(cx - 5 * u, cy - u / 2, 10 * u, u);
+                g2.fillOval(cx - 6 * u, cy - u, 2 * u, 2 * u);
                 break;
 
             default:

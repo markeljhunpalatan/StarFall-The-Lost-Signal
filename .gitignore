@@ -19,3 +19,7 @@ Desktop.ini
 # Temporary files
 *.tmp
 *.log
+
+# Player progress and high scores (kept on this computer, not in the repository)
+savedata.properties
+highscores.properties

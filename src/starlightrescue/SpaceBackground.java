@@ -1,24 +1,27 @@
 package starlightrescue;
 
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.RadialGradientPaint;
-import java.awt.Shape;
 import java.awt.Stroke;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Point2D;
+import java.awt.image.BufferedImage;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 
 /**
  * Draws everything BEHIND the action: the scrolling stars plus the scenery
  * that changes with the story (Earth, deep space, the mothership's shadow
- * and the wormhole).
+ * and the wormhole), and the black hole behind the Hard LEVEL.
  */
 public class SpaceBackground {
 
-    public enum Scene { DEFAULT, EARTH, DEEP_SPACE, MOTHERSHIP, WORMHOLE }
+    public enum Scene { DEFAULT, EARTH, DEEP_SPACE, MOTHERSHIP, WORMHOLE, BLACK_HOLE }
 
     private static final int STAR_COUNT = 110;
 
@@ -35,14 +38,13 @@ public class SpaceBackground {
     private Scene scene = Scene.DEFAULT;
     private int tick = 0;
 
-    // Continents on the Earth: {x, y, width, height} in units of the planet radius
-    private static final double[][] CONTINENTS = {
-        {-0.55, -0.25, 0.70, 0.45},
-        {-0.20,  0.35, 0.40, 0.55},
-        { 0.35, -0.30, 0.55, 0.40},
-        { 0.55,  0.30, 0.35, 0.30},
-        {-0.95,  0.10, 0.30, 0.50}
-    };
+    // Pictures that are expensive to paint are kept, so each frame only copies them.
+    // The sky is kept per scene. The nebula is painted small and scaled up. The Earth's
+    // glow and shadow are kept per size (the continents still turn, so they stay live).
+    private BufferedImage skyImage;
+    private Scene skyScene;
+    private BufferedImage nebulaImage;
+    private final Map<Integer, BufferedImage[]> earthCache = new HashMap<>();
 
     public SpaceBackground(int width, int height) {
         this.width = width;
@@ -82,7 +84,7 @@ public class SpaceBackground {
      */
     public void draw(Graphics2D g, double progress) {
 
-        drawSky(g);
+        drawSkyCached(g);
         drawNebula(g);
         drawStars(g);
 
@@ -106,6 +108,10 @@ public class SpaceBackground {
             case WORMHOLE:
                 drawWormhole(g, (int) (760 + 70 * progress), 310,
                              (int) (50 + 230 * progress));
+                break;
+
+            case BLACK_HOLE:
+                BlackHoleArt.draw(g, tick);
                 break;
 
             default:
@@ -135,6 +141,10 @@ public class SpaceBackground {
                 top = new Color(5, 6, 22);
                 bottom = new Color(14, 8, 36);
                 break;
+            case BLACK_HOLE:
+                top = new Color(3, 2, 10);
+                bottom = new Color(10, 4, 16);
+                break;
             default:
                 top = new Color(5, 8, 25);
                 bottom = new Color(8, 10, 32);
@@ -145,7 +155,38 @@ public class SpaceBackground {
         g.fillRect(0, 0, width, height);
     }
 
-    private void drawNebula(Graphics2D g) {
+    /** Copies the sky picture, painting it once for each scene. */
+    private void drawSkyCached(Graphics2D g) {
+
+        if (skyImage == null || skyScene != scene) {
+
+            skyImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            Graphics2D sky = skyImage.createGraphics();
+            drawSky(sky);
+            sky.dispose();
+
+            skyScene = scene;
+        }
+
+        g.drawImage(skyImage, 0, 0, null);
+    }
+
+    private void drawNebula(Graphics2D screen) {
+
+        // The nebula is very soft, so it is painted at a quarter of the size and scaled up.
+        // That is far cheaper than painting the big gradients at full size every frame.
+        int smallW = width / 4;
+        int smallH = height / 4;
+
+        if (nebulaImage == null) {
+            nebulaImage = new BufferedImage(smallW, smallH, BufferedImage.TYPE_INT_ARGB);
+        }
+
+        Graphics2D g = nebulaImage.createGraphics();
+        g.setComposite(AlphaComposite.Clear);
+        g.fillRect(0, 0, smallW, smallH);
+        g.setComposite(AlphaComposite.SrcOver);
+        g.scale(0.25, 0.25);
 
         Color a;
         Color b;
@@ -167,6 +208,10 @@ public class SpaceBackground {
                 a = new Color(30, 70, 160, 45);
                 b = new Color(60, 50, 140, 30);
                 break;
+            case BLACK_HOLE:
+                a = new Color(110, 40, 150, 50);
+                b = new Color(190, 100, 40, 35);
+                break;
             default:
                 a = new Color(60, 50, 140, 35);
                 b = new Color(20, 70, 130, 30);
@@ -178,6 +223,9 @@ public class SpaceBackground {
         drawBlob(g, 190 + drift, 150, 280, a);
         drawBlob(g, 640 - drift, 440, 320, b);
         drawBlob(g, 430, 300 + drift, 190, a);
+
+        g.dispose();
+        screen.drawImage(nebulaImage, 0, 0, width, height, null);
     }
 
     private void drawBlob(Graphics2D g, double cx, double cy, float radius, Color color) {
@@ -193,14 +241,18 @@ public class SpaceBackground {
         g.fill(new Ellipse2D.Double(cx - radius, cy - radius, radius * 2, radius * 2));
     }
 
+    // The star colours are made once (making a colour for every star every frame is wasteful)
+    private static final Color STAR_DIM = new Color(100, 120, 160);
+    private static final Color STAR_MID = new Color(180, 200, 255);
+
     private void drawStars(Graphics2D g) {
 
         for (int i = 0; i < STAR_COUNT; i++) {
 
             if (starSize[i] == 1) {
-                g.setColor(new Color(100, 120, 160));
+                g.setColor(STAR_DIM);
             } else if (starSize[i] == 2) {
-                g.setColor(new Color(180, 200, 255));
+                g.setColor(STAR_MID);
             } else {
                 g.setColor(Color.WHITE);
             }
@@ -211,7 +263,8 @@ public class SpaceBackground {
                 g.drawLine((int) starX[i], (int) starY[i],
                            (int) starX[i] + len, (int) starY[i]);
             } else {
-                g.fillOval((int) starX[i], (int) starY[i], starSize[i], starSize[i]);
+                // Plain squares: at this size they look the same, and they are much cheaper than circles
+                g.fillRect((int) starX[i], (int) starY[i], starSize[i], starSize[i]);
             }
         }
     }
@@ -227,42 +280,45 @@ public class SpaceBackground {
             return;
         }
 
-        // Atmosphere glow
+        // The glow around the planet, and the lit planet itself, are pictures kept for this size
+        BufferedImage[] earth = earthImages(r);
+        int half = earth[0].getWidth() / 2;
+        g.drawImage(earth[0], cx - half, cy - half, null);
+        g.drawImage(earth[1], cx - r, cy - r, null);
+    }
+
+    /**
+     * The planet's glow (outside the disc) and the lit planet, painted once per size.
+     * Index 0 is the glow, index 1 is the planet.
+     */
+    private BufferedImage[] earthImages(int r) {
+
+        BufferedImage[] pair = earthCache.get(r);
+
+        if (pair != null) {
+            return pair;
+        }
+
+        if (earthCache.size() > 6) {
+            earthCache.clear();
+        }
+
         float glow = r * 1.18f;
-        g.setPaint(new RadialGradientPaint(
-            new Point2D.Float(cx, cy), glow,
+        int size = (int) Math.ceil(glow) * 2 + 2;
+
+        BufferedImage glowImage = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D a = glowImage.createGraphics();
+        a.setPaint(new RadialGradientPaint(
+            new Point2D.Float(size / 2f, size / 2f), glow,
             new float[]{0.84f, 1f},
             new Color[]{new Color(90, 170, 255, 150), new Color(90, 170, 255, 0)}
         ));
-        g.fill(new Ellipse2D.Double(cx - glow, cy - glow, glow * 2, glow * 2));
+        a.fill(new Ellipse2D.Double(size / 2.0 - glow, size / 2.0 - glow, glow * 2, glow * 2));
+        a.dispose();
 
-        Shape oldClip = g.getClip();
-        g.setClip(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
-
-        // Ocean
-        g.setColor(new Color(20, 75, 180));
-        g.fillRect(cx - r, cy - r, r * 2, r * 2);
-
-        // Continents drift slowly so the planet looks like it is turning
-        g.setColor(new Color(45, 135, 70));
-        double scroll = (tick * 0.0008) % 2.4;
-
-        for (double[] c : CONTINENTS) {
-            double ux = ((c[0] + scroll + 1.2) % 2.4) - 1.2;
-            g.fillOval((int) (cx + (ux - c[2] / 2) * r),
-                       (int) (cy + (c[1] - c[3] / 2) * r),
-                       (int) (c[2] * r), (int) (c[3] * r));
-        }
-
-        // Light comes from the upper right, so the left side falls into shadow
-        g.setPaint(new RadialGradientPaint(
-            new Point2D.Float(cx + r * 0.45f, cy - r * 0.45f), r * 1.7f,
-            new float[]{0f, 0.55f, 1f},
-            new Color[]{new Color(0, 0, 0, 0), new Color(0, 0, 15, 70), new Color(0, 0, 10, 225)}
-        ));
-        g.fillRect(cx - r, cy - r, r * 2, r * 2);
-
-        g.setClip(oldClip);
+        pair = new BufferedImage[]{glowImage, PlanetArt.disc(r)};
+        earthCache.put(r, pair);
+        return pair;
     }
 
     /** The mothership's huge shadow on the right edge of the screen. */

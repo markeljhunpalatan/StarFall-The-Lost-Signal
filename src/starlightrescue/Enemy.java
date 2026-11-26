@@ -1,13 +1,11 @@
 package starlightrescue;
 
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.Polygon;
 import java.awt.Rectangle;
-import java.awt.RenderingHints;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -28,7 +26,7 @@ import java.util.Random;
  */
 public class Enemy {
 
-    public enum Type { SCOUT, ZIGZAG, GUNNER, DIVER, LOOPER, DASHER }
+    public enum Type { SCOUT, ZIGZAG, GUNNER, DIVER, LOOPER, DASHER, EXPLODER }
 
     private static final Random RANDOM = new Random();
 
@@ -53,6 +51,7 @@ public class Enemy {
 
     private int tick = 0;
     private int shootCooldown = 0;
+    private int muzzleFlash = 0;        // a short glow at the front of the alien when it fires
     private int hitFlash = 0;
 
     // Dasher state: 0 = creeping in, 1 = charging up, 2 = dashing
@@ -112,6 +111,12 @@ public class Enemy {
                 hp = 12;
                 break;
 
+            case EXPLODER:
+                // Slow and fragile, but it blows up when destroyed (see GamePanel.detonate)
+                base = 1.6 + RANDOM.nextDouble() * 0.6;
+                hp = 8;
+                break;
+
             default:
                 base = RANDOM.nextInt(3) + 2;
                 break;
@@ -121,6 +126,11 @@ public class Enemy {
         amplitude = amp;
         loopRadius = loopR;
         health = hp;
+
+        // The small aliens start with a short wait, so they don't all fire at once
+        if (type == Type.SCOUT || type == Type.ZIGZAG) {
+            shootCooldown = 40 + RANDOM.nextInt(50);
+        }
 
         // Pick a lane that keeps the whole weave on screen
         int margin = (int) Math.max(amp, loopR);
@@ -162,6 +172,10 @@ public class Enemy {
 
         if (shootCooldown > 0) {
             shootCooldown--;
+        }
+
+        if (muzzleFlash > 0) {
+            muzzleFlash--;
         }
 
         if (hitFlash > 0) {
@@ -266,7 +280,7 @@ public class Enemy {
                 continue;                                // already flown past
             }
 
-            double ticks = Math.max(0, gap) / (Bullet.SPEED + speed);
+            double ticks = Math.max(0, gap) / (bullet.getWeapon().speed + speed);
 
             if (ticks > lookAhead) {
                 continue;                                // too far away to worry about yet
@@ -310,17 +324,58 @@ public class Enemy {
         }
     }
 
-    /** Armed aliens call this every frame; true means "fire now". */
-    public boolean shouldShoot() {
+    /**
+     * The shots this alien fires this tick (usually none), and when.
+     *
+     *   GUNNER  - one shot straight left
+     *   SCOUT   - one shot aimed at where the player is
+     *   ZIGZAG  - a quick pair of shots straight left
+     *
+     * Only aliens that are on screen (and past the entrance) shoot. The small aliens
+     * shoot from the moment they come in, and across nearly the whole screen.
+     */
+    public List<BossBullet> fire(int playerCenterX, int playerCenterY) {
 
-        if (type == Type.GUNNER && shootCooldown == 0
-                && x < GamePanel.SCREEN_WIDTH - 60 && x > 200) {
+        List<BossBullet> shots = new ArrayList<>();
 
-            shootCooldown = 110 + RANDOM.nextInt(50);
-            return true;
+        // The small aliens can shoot almost to the left edge; the others stop further right
+        boolean small = (type == Type.SCOUT || type == Type.ZIGZAG);
+        int leftLimit = small ? 40 : 200;
+
+        if (shootCooldown > 0 || x >= GamePanel.SCREEN_WIDTH - 60 || x <= leftLimit) {
+            return shots;
         }
 
-        return false;
+        double sx = getShotX();
+        double sy = getShotY();
+
+        switch (type) {
+
+            case GUNNER:
+                shots.add(new BossBullet(sx, sy, -5.0, 0.0, 0.6));
+                shootCooldown = 110 + RANDOM.nextInt(50);
+                break;
+
+            case SCOUT:
+                // Aim at the player: the shot slides across to where they are
+                double frames = Math.max(20.0, (sx - playerCenterX) / 5.5);
+                double vy = Math.max(-3.0, Math.min(3.0, (playerCenterY - sy) / frames));
+                shots.add(new BossBullet(sx, sy, -5.5, vy, 0.6));
+                shootCooldown = 80 + RANDOM.nextInt(30);
+                break;
+
+            case ZIGZAG:
+                shots.add(new BossBullet(sx, sy - 5, -5.0, 0.0, 0.6));
+                shots.add(new BossBullet(sx, sy + 5, -5.0, 0.0, 0.6));
+                shootCooldown = 110 + RANDOM.nextInt(30);
+                break;
+
+            default:
+                return shots;
+        }
+
+        muzzleFlash = 6;
+        return shots;
     }
 
     public void takeDamage(int damage) {
@@ -340,6 +395,7 @@ public class Enemy {
             case DIVER:  base = 20; break;
             case LOOPER: base = 20; break;
             case DASHER: base = 30; break;
+            case EXPLODER: base = 20; break;
             default:     base = 10; break;
         }
         return isEvasive() ? base + 10 : base;
@@ -349,147 +405,60 @@ public class Enemy {
         return type;
     }
 
+    /** The alien's rank: 1 drone, 2 fighter, 3 elite (the art is drawn to match, see AlienArt). */
+    public int getRank() {
+        switch (type) {
+            case SCOUT:
+            case ZIGZAG:
+                return 1;
+            case DASHER:
+            case EXPLODER:
+                return 3;
+            default:
+                return 2;
+        }
+    }
+
     // ===============================================================
     // DRAWING
     // ===============================================================
 
+    /**
+     * Draws the alien's pixel art (see AlienArt). The picture depends on the alien's rank
+     * and type, and it moves: it bobs, blinks and its limbs swing.
+     */
     public void draw(Graphics g) {
 
         Graphics2D g2 = (Graphics2D) g.create();
 
-        g2.setRenderingHint(
-            RenderingHints.KEY_ANTIALIASING,
-            RenderingHints.VALUE_ANTIALIAS_ON
-        );
-
-        int ix = (int) x;
-        int iy = (int) y;
-
-        // A charging dasher shakes and glows
-        boolean charging = (type == Type.DASHER && dashPhase == 1);
-
-        if (charging) {
-            ix += (tick % 2 == 0) ? 2 : -2;
-        }
-
-        Color limbs;
-        Color body;
-        Color tips;
-
-        switch (type) {
-            case ZIGZAG:
-                limbs = new Color(0, 115, 125);
-                body = new Color(0, 175, 175);
-                tips = Color.CYAN;
-                break;
-            case GUNNER:
-                limbs = new Color(150, 60, 20);
-                body = new Color(222, 100, 40);
-                tips = Color.ORANGE;
-                break;
-            case DIVER:
-                limbs = new Color(150, 30, 60);
-                body = new Color(238, 60, 102);
-                tips = new Color(255, 170, 190);
-                break;
-            case LOOPER:
-                limbs = new Color(80, 130, 30);
-                body = new Color(142, 212, 62);
-                tips = new Color(232, 255, 124);
-                break;
-            case DASHER:
-                limbs = new Color(160, 70, 20);
-                body = new Color(242, 192, 52);
-                tips = new Color(255, 90, 60);
-                break;
-            default:
-                limbs = new Color(110, 50, 170);
-                body = new Color(168, 76, 232);
-                tips = Color.MAGENTA;
-                break;
-        }
-
         // Afterimage when a smart alien dodges
         if (dodgeFlash > 0) {
             g2.setColor(new Color(0, 230, 255, dodgeFlash * 14));
-            g2.fillOval(ix, iy + 5 - lastDodge * 9, WIDTH, HEIGHT - 5);
+            g2.fillOval(x2(), iy2() + 5 - lastDodge * 9, WIDTH, HEIGHT - 5);
         }
 
-        // Soft glow around the alien
-        int glow = charging ? 90 + (int) (Math.sin(tick * 0.8) * 50) : 34;
-        g2.setColor(new Color(tips.getRed(), tips.getGreen(), tips.getBlue(), Math.max(0, glow)));
-        g2.fillOval(ix - 8, iy - 2, WIDTH + 16, HEIGHT + 8);
+        // A charging elite shakes a little before it dashes
+        boolean charging = (type == Type.DASHER && dashPhase == 1);
+        double shake = charging ? ((tick % 2 == 0) ? 2 : -2) : 0;
 
-        // Cannon (armed aliens only)
-        if (type == Type.GUNNER) {
-            g2.setColor(Color.DARK_GRAY);
-            g2.fillRect(ix - 9, iy + 19, 14, 7);
-            g2.setColor(Color.ORANGE);
-            g2.fillRect(ix - 9, iy + 20, 3, 5);
-        }
+        AlienArt.draw(g2, type, getCenterX() + shake, getCenterY(), tick, hitFlash > 0, charging);
 
-        // Tentacles
-        g2.setStroke(new BasicStroke(1.6f));
-        g2.setColor(limbs);
-        g2.drawLine(ix + 10, iy + 27, ix + 5, iy + 35);
-        g2.drawLine(ix + 22, iy + 30, ix + 22, iy + 38);
-        g2.drawLine(ix + 35, iy + 27, ix + 40, iy + 35);
-
-        // Antennae
-        g2.drawLine(ix + 12, iy + 8, ix + 7, iy);
-        g2.drawLine(ix + 33, iy + 8, ix + 38, iy);
-
-        // Antennae tips
-        g2.setColor(tips);
-        g2.fillOval(ix + 4, iy - 3, 6, 6);
-        g2.fillOval(ix + 35, iy - 3, 6, 6);
-
-        // Dasher spikes
-        if (type == Type.DASHER) {
-            for (int i = 0; i < 3; i++) {
-                int sx = ix + 10 + i * 12;
-                g2.fillPolygon(new int[]{sx, sx + 8, sx + 4}, new int[]{iy + 8, iy + 8, iy - 4}, 3);
-            }
-        }
-
-        // Alien body (flashes white when hit)
-        g2.setColor(hitFlash > 0 ? Color.WHITE : body);
-        g2.fillOval(ix, iy + 5, WIDTH, HEIGHT - 5);
-
-        // Looper halo
-        if (type == Type.LOOPER) {
-            g2.setColor(new Color(232, 255, 124, 170));
-            g2.setStroke(new BasicStroke(1.6f));
-            g2.drawOval(ix - 3, iy + 2, WIDTH + 6, HEIGHT - 1);
-        }
-
-        // Eyes
-        g2.setColor(Color.WHITE);
-        g2.fillOval(ix + 9, iy + 13, 10, 10);
-        g2.fillOval(ix + 26, iy + 13, 10, 10);
-
-        // Pupils: smart (evasive) aliens have glowing cyan eyes
-        if (isEvasive()) {
-            g2.setColor(new Color(0, 230, 255, 120));
-            g2.fillOval(ix + 7, iy + 11, 14, 14);
-            g2.fillOval(ix + 24, iy + 11, 14, 14);
-            g2.setColor(new Color(0, 200, 255));
-        } else {
-            g2.setColor(Color.BLACK);
-        }
-
-        g2.fillOval(ix + 12, iy + 16, 5, 5);
-        g2.fillOval(ix + 29, iy + 16, 5, 5);
-
-        // Diver: an angry visor over the eyes
-        if (type == Type.DIVER) {
-            g2.setColor(new Color(60, 0, 20, 220));
-            g2.fillPolygon(new Polygon(
-                new int[]{ix + 6, ix + 39, ix + 39, ix + 6},
-                new int[]{iy + 9, iy + 13, iy + 15, iy + 15}, 4));
+        // The muzzle flash: a short glow at the front of the alien as it fires
+        if (muzzleFlash > 0) {
+            int size = 4 + muzzleFlash;
+            g2.setColor(new Color(255, 170, 60, 60 + muzzleFlash * 20));
+            g2.fillOval(x2() - size / 2, iy2() + HEIGHT / 2 - size / 2, size, size);
         }
 
         g2.dispose();
+    }
+
+    private int x2() {
+        return (int) x;
+    }
+
+    private int iy2() {
+        return (int) y;
     }
 
     public Rectangle getBounds() {
