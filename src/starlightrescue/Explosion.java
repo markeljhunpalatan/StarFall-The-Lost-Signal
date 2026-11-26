@@ -87,6 +87,14 @@ public class Explosion {
 
     public void draw(Graphics2D g2) {
 
+        // Shockwave ring
+        if (age < 16) {
+            double r = flashRadius * (0.6 + age / 5.0);
+            g2.setStroke(new java.awt.BasicStroke(2.5f));
+            g2.setColor(new Color(255, 200, 120, clamp(200 - age * 13)));
+            g2.drawOval((int) (cx - r), (int) (cy - r), (int) (r * 2), (int) (r * 2));
+        }
+
         // Quick white flash at the start
         if (age < 10) {
             int alpha = clamp(230 - age * 24);

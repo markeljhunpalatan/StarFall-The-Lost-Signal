@@ -117,6 +117,64 @@ final class SoundSynth {
                 tone(b, 0, 0.05, 1400, 1100, Wave.SINE, 1.0, 0.001, 2.0);
                 return finish(b, 0.22);
 
+            case COIN:
+                b = buf(0.22);
+                tone(b, 0.00, 0.07, hz(88), hz(88), Wave.SINE, 1.0, 0.001, 1.4);
+                tone(b, 0.06, 0.16, hz(95), hz(95), Wave.SINE, 1.0, 0.001, 1.8);
+                return finish(b, 0.16);
+
+            case ALERT:
+                b = buf(0.5);
+                tone(b, 0.00, 0.12, 900, 900, Wave.SQUARE, 1.0, 0.004, 0.6);
+                tone(b, 0.20, 0.12, 900, 900, Wave.SQUARE, 1.0, 0.004, 0.6);
+                smooth(b, 0.5f);
+                return finish(b, 0.22);
+
+            case CHARGE:
+                b = buf(0.9);
+                tone(b, 0.0, 0.85, 120, 900, Wave.SAW, 0.8, 0.05, 0.3);
+                tone(b, 0.0, 0.85, 240, 1800, Wave.SINE, 0.5, 0.05, 0.3);
+                smooth(b, 0.35f);
+                return finish(b, 0.30);
+
+            case LASER:
+                b = buf(0.8);
+                tone(b, 0.0, 0.75, 180, 150, Wave.SAW, 1.0, 0.005, 0.6);
+                tone(b, 0.0, 0.75, 362, 300, Wave.SQUARE, 0.5, 0.005, 0.6);
+                noise(b, 0.0, 0.75, 0.6, 0.8, 0.7, 0.4);
+                smooth(b, 0.4f);
+                return finish(b, 0.40);
+
+            case MISSILE:
+                b = buf(0.45);
+                noise(b, 0.0, 0.42, 1.0, 1.2, 0.25, 0.6);
+                tone(b, 0.0, 0.3, 300, 700, Wave.SINE, 0.5, 0.01, 1.2);
+                return finish(b, 0.30);
+
+            case BOOST:
+                b = buf(0.35);
+                noise(b, 0.0, 0.32, 1.0, 1.5, 0.15, 0.9);
+                tone(b, 0.0, 0.25, 200, 900, Wave.SINE, 0.5, 0.005, 1.5);
+                return finish(b, 0.32);
+
+            case TELEPORT:
+                b = buf(0.5);
+                tone(b, 0.0, 0.45, 1500, 200, Wave.SINE, 1.0, 0.005, 1.0);
+                tone(b, 0.0, 0.45, 1520, 210, Wave.TRI, 0.6, 0.005, 1.0);
+                return finish(b, 0.30);
+
+            case REFUND:
+                b = buf(0.35);
+                tone(b, 0.00, 0.10, hz(91), hz(91), Wave.SINE, 1.0, 0.001, 1.4);
+                tone(b, 0.08, 0.10, hz(86), hz(86), Wave.SINE, 1.0, 0.001, 1.4);
+                tone(b, 0.16, 0.16, hz(79), hz(79), Wave.SINE, 1.0, 0.001, 1.6);
+                return finish(b, 0.26);
+
+            case UNDO:
+                b = buf(0.22);
+                tone(b, 0.0, 0.2, 900, 400, Wave.TRI, 1.0, 0.002, 1.5);
+                return finish(b, 0.26);
+
             case MISSION_COMPLETE:
                 b = buf(1.8);
                 tone(b, 0.00, 0.20, hz(72), hz(72), Wave.SQUARE, 0.6, 0.004, 1.0);

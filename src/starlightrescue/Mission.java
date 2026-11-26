@@ -46,7 +46,7 @@ public class Mission {
 
         /** Credits you earn for destroying it. Tougher boss = bigger reward. */
         int reward() {
-            return 100 + health;
+            return 100 + health / 4;
         }
     }
 
@@ -56,8 +56,21 @@ public class Mission {
     final int target;         // kills needed, or seconds to survive
     final int spawnInterval;  // frames between enemy spawns (lower = harder)
 
-    double zigzagAt = 0.4;    // progress at which zig-zag aliens start appearing
-    double gunnerAt = 2.0;    // progress at which armed aliens appear (2.0 = never)
+    // Progress (0.0 - 1.0) at which each kind of alien starts appearing. 2.0 = never.
+    double zigzagAt = 0.4;
+    double gunnerAt = 2.0;
+    double diverAt = 2.0;
+    double looperAt = 2.0;
+    double dasherAt = 2.0;
+
+    // Space hazards: ticks between asteroids / meteor showers (0 = none), and when they start
+    int asteroidEvery = 0;
+    int meteorEvery = 0;
+    double hazardsFrom = 0.2;
+
+    // Aliens get faster: they start at baseSpeed and speed up by speedRamp as the mission goes on
+    double baseSpeed = 1.0;
+    double speedRamp = 0.3;
 
     final List<BossSpec> bosses = new ArrayList<>();
     final List<Radio> radioLines = new ArrayList<>();
@@ -80,6 +93,28 @@ public class Mission {
         return this;
     }
 
+    /** More alien movement styles: diver (homes in), looper (loops), dasher (charges). */
+    Mission moves(double diverAt, double looperAt, double dasherAt) {
+        this.diverAt = diverAt;
+        this.looperAt = looperAt;
+        this.dasherAt = dasherAt;
+        return this;
+    }
+
+    /** asteroidEvery / meteorEvery = ticks between each one (60 ticks = 1 second). */
+    Mission hazards(int asteroidEvery, int meteorEvery, double from) {
+        this.asteroidEvery = asteroidEvery;
+        this.meteorEvery = meteorEvery;
+        this.hazardsFrom = from;
+        return this;
+    }
+
+    Mission speed(double base, double ramp) {
+        this.baseSpeed = base;
+        this.speedRamp = ramp;
+        return this;
+    }
+
     Mission boss(int atKills, String name, int health, int design,
                  String speaker, String line) {
         Radio radio = (line == null) ? null : new Radio(0, speaker, line);
@@ -98,37 +133,50 @@ public class Mission {
     }
 
     // ---------------------------------------------------------------
-    // THE CAMPAIGN  (boss health grows every mission: 30 -> 60 -> 120)
+    // THE CAMPAIGN  (boss health grows every mission: 250 -> 450 -> 900)
+    // Health is in damage points: a basic shot does 10 damage.
     // ---------------------------------------------------------------
     static final Mission[] CAMPAIGN = {
 
         new Mission("EARTH DEFENSE", SpaceBackground.Scene.EARTH,
                     Objective.KILLS, 15, 100)
             .enemies(0.45, 2.0)
+            .moves(0.75, 2.0, 2.0)
+            .hazards(520, 0, 0.35)
+            .speed(1.0, 0.30)
             .radio(0.0, "COMMAND", "Pilot, unknown ships are closing on Earth. Weapons free!")
             .radio(0.5, "COMMAND", "They keep coming! Hold the line - Earth is counting on you.")
-            .boss(15, "ALIEN VANGUARD", 30, 0,
+            .boss(15, "ALIEN VANGUARD", 250, 0,
                   "COMMAND", "Their commander is here! Take it down before it reaches Earth!"),
 
         new Mission("DEEP-SPACE PURSUIT", SpaceBackground.Scene.DEEP_SPACE,
                     Objective.KILLS, 20, 74)
             .enemies(0.15, 0.55)
+            .moves(0.30, 0.60, 2.0)
+            .hazards(300, 1100, 0.15)
+            .speed(1.05, 0.35)
             .radio(0.0, "COMMAND", "The survivors are fleeing into deep space. Stay on their tail.")
             .radio(0.3, "SIGNAL", "...closer... follow... closer...")
             .radio(0.5, "COMMAND", "New contacts ahead - those ones have weapons. Watch out!")
-            .boss(20, "DEEP-SPACE WARSHIP", 60, 1,
+            .boss(20, "DEEP-SPACE WARSHIP", 450, 1,
                   "PILOT", "A warship! It's blocking the signal. Break through!"),
 
         new Mission("THE MOTHERSHIP", SpaceBackground.Scene.MOTHERSHIP,
                     Objective.KILLS, 8, 70)
             .enemies(0.1, 0.5)
+            .moves(0.2, 0.4, 0.6)
+            .hazards(420, 0, 0.1)
+            .speed(1.1, 0.35)
             .radio(0.0, "COMMAND", "That signature... it's the mothership! Clear its escorts!")
-            .boss(8, "ALIEN MOTHERSHIP", 120, 2,
+            .boss(8, "ALIEN MOTHERSHIP", 900, 2,
                   "PILOT", "That's the ship that took her. Give her back!"),
 
         new Mission("THE WORMHOLE", SpaceBackground.Scene.WORMHOLE,
                     Objective.SURVIVE, 45, 42)
             .enemies(0.0, 0.2)
+            .moves(0.0, 0.15, 0.35)
+            .hazards(230, 560, 0.0)
+            .speed(1.15, 0.50)
             .radio(0.0, "PILOT", "A wormhole! It's unstable - I have to get her through!")
             .radio(0.45, "COMMAND", "Hull is holding! Keep going, pilot!")
             .radio(0.8, "PILOT", "Almost there... hold together, just a little longer!")
@@ -144,22 +192,33 @@ public class Mission {
         new Mission("EASY LEVEL", SpaceBackground.Scene.EARTH,
                     Objective.KILLS, 12, 110)
             .enemies(0.5, 2.0)
+            .moves(2.0, 2.0, 2.0)
+            .hazards(600, 0, 0.3)
+            .speed(0.9, 0.25)
             .loadout(2, 2, 1, 1),
 
-        // MODERATE: more aliens, and armed aliens join in. No boss.
+        // MODERATE: more aliens, armed aliens join in, and ONE boss at the end.
         new Mission("MODERATE LEVEL", SpaceBackground.Scene.DEEP_SPACE,
                     Objective.KILLS, 22, 68)
             .enemies(0.25, 0.6)
-            .loadout(2, 2, 1, 0),
+            .moves(0.45, 0.75, 2.0)
+            .hazards(360, 0, 0.2)
+            .speed(1.0, 0.35)
+            .loadout(2, 2, 1, 1)
+            .boss(22, "ALIEN VANGUARD", 280, 0,
+                  "WARNING", "A Vanguard guards this sector. Watch out for its charge!"),
 
         // HARD: lots of aliens and TWO boss fights.
         new Mission("HARD LEVEL", SpaceBackground.Scene.MOTHERSHIP,
                     Objective.KILLS, 32, 50)
             .enemies(0.0, 0.3)
+            .moves(0.15, 0.35, 0.55)
+            .hazards(280, 800, 0.1)
+            .speed(1.1, 0.45)
             .loadout(3, 3, 2, 1)
-            .boss(16, "ELITE DREADNOUGHT", 50, 3,
+            .boss(16, "ELITE DREADNOUGHT", 380, 3,
                   "WARNING", "An elite boss is blocking the sector!")
-            .boss(32, "HIVE QUEEN", 90, 4,
+            .boss(32, "HIVE QUEEN", 650, 4,
                   "WARNING", "The Hive Queen herself! Give it everything you have!")
     };
 }

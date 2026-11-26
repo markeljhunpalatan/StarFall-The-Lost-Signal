@@ -26,6 +26,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -52,24 +53,28 @@ public class GamePanel extends JPanel {
     static final int SCREEN_WIDTH = 800;
     static final int SCREEN_HEIGHT = 600;
 
-    /** Top of the play field. Everything above this is the HUD bar. */
-    static final int PLAY_TOP = 58;
+    /** The play field sits between the top HUD bar and the bottom HUD bar. */
+    static final int PLAY_TOP = 66;
+    static final int PLAY_BOTTOM = 540;
 
     static final int TICKS_PER_SECOND = 60;
     static final int START_LIVES = 4;
     static final int MAX_LIVES = 6;
 
-    private static final int BANNER_TIME = 170;
-    private static final String SCORE_FILE = "highscores.properties";
+    static final int BANNER_TIME = 170;
+    static final String SAVE_FILE = "savedata.properties";
 
-    private enum GameState {
+    /** Tests can switch saving off with  -Dstarfall.nosave=true */
+    static final boolean NO_SAVE = Boolean.getBoolean("starfall.nosave");
+
+    enum GameState {
         MENU,
         MODE_SELECT,
         DIFFICULTY_SELECT,
         SETTINGS,
         INSTRUCTIONS,
         STORY,
-        UPGRADE,
+        UPGRADE,        // the hangar (from the menu) and the upgrade station (between fights)
         PLAYING,
         PAUSED,
         GAME_OVER,
@@ -77,145 +82,271 @@ public class GamePanel extends JPanel {
         VICTORY
     }
 
-    private enum GameMode {
+    enum GameMode {
         HARDCORE, ADVENTURE, LEVEL
     }
 
-    private enum Difficulty {
+    enum Difficulty {
         EASY, MODERATE, HARD
     }
 
-    private GameState currentState = GameState.MENU;
+    GameState currentState = GameState.MENU;
 
-    private GameMode selectedMode = GameMode.ADVENTURE;
-    private Difficulty selectedDifficulty = Difficulty.MODERATE;
+    GameMode selectedMode = GameMode.ADVENTURE;
+    Difficulty selectedDifficulty = Difficulty.MODERATE;
 
-    // Main-menu artwork and buttons
-    private BufferedImage menuBackground;
-    private Rectangle hoveredButton = null;
+    // Main-menu artwork and the button under the mouse
+    BufferedImage menuBackground;
+    Rectangle hoveredButton = null;
 
-    private static final Rectangle PLAY_BUTTON = new Rectangle(305, 300, 190, 44);
-    private static final Rectangle SETTINGS_BUTTON = new Rectangle(305, 355, 190, 44);
-    private static final Rectangle SOUND_BUTTON = new Rectangle(285, 372, 230, 40);
-    private static final Rectangle MUSIC_BUTTON = new Rectangle(285, 420, 230, 40);
-    private static final Rectangle BACK_BUTTON = new Rectangle(305, 468, 190, 40);
+    // ---------- Buttons (all screen positions in one place) ----------
 
-    // Upgrade station: one card per upgrade, plus the launch button
-    private static final Rectangle LAUNCH_BUTTON = new Rectangle(300, 520, 200, 44);
-    private static final Rectangle[] UPGRADE_CARDS = new Rectangle[Upgrades.TRACKS];
+    // Main menu
+    static final Rectangle PLAY_BUTTON = new Rectangle(300, 262, 200, 46);
+    static final Rectangle HANGAR_BUTTON = new Rectangle(300, 318, 200, 46);
+    static final Rectangle SETTINGS_BUTTON = new Rectangle(300, 374, 200, 46);
+    static final Rectangle HOWTO_BUTTON = new Rectangle(300, 430, 200, 46);
+
+    // Mode and difficulty cards
+    static final Rectangle HARDCORE_BUTTON = new Rectangle(40, 160, 230, 318);
+    static final Rectangle ADVENTURE_BUTTON = new Rectangle(285, 160, 230, 318);
+    static final Rectangle LEVEL_BUTTON = new Rectangle(530, 160, 230, 318);
+
+    static final Rectangle EASY_BUTTON = new Rectangle(40, 160, 230, 318);
+    static final Rectangle MODERATE_BUTTON = new Rectangle(285, 160, 230, 318);
+    static final Rectangle HARD_BUTTON = new Rectangle(530, 160, 230, 318);
+
+    static final Rectangle SELECT_BACK_BUTTON = new Rectangle(320, 500, 160, 40);
+
+    // Settings
+    static final Rectangle SOUND_BUTTON = new Rectangle(250, 322, 300, 44);
+    static final Rectangle MUSIC_BUTTON = new Rectangle(250, 374, 300, 44);
+    static final Rectangle RESET_BUTTON = new Rectangle(250, 426, 300, 44);
+    static final Rectangle BACK_BUTTON = new Rectangle(300, 490, 200, 46);
+
+    // How to play: three tabs and a back button
+    static final Rectangle[] HELP_TABS = {
+        new Rectangle(160, 76, 150, 34), new Rectangle(325, 76, 150, 34), new Rectangle(490, 76, 150, 34)
+    };
+    static final Rectangle HELP_BACK_BUTTON = new Rectangle(320, 546, 160, 40);
+
+    // Hangar: one card per upgrade (each with BUY and SELL), undo, repair and launch
+    static final Rectangle[] UPGRADE_CARDS = new Rectangle[Upgrades.TRACKS];
+    static final Rectangle[] BUY_BUTTONS = new Rectangle[Upgrades.TRACKS];
+    static final Rectangle[] SELL_BUTTONS = new Rectangle[Upgrades.TRACKS];
+    static final Rectangle UNDO_BUTTON = new Rectangle(520, 16, 104, 36);
+    static final Rectangle REPAIR_BUTTON = new Rectangle(30, 478, 290, 38);
+    static final Rectangle LAUNCH_BUTTON = new Rectangle(300, 540, 200, 46);
+
+    // Pop-up windows (pause, mission complete, game over, the end)
+    static final Rectangle MODAL_PRIMARY = new Rectangle(215, 432, 180, 46);
+    static final Rectangle MODAL_SECONDARY = new Rectangle(405, 432, 180, 46);
+    static final Rectangle VICTORY_BUTTON = new Rectangle(310, 480, 180, 46);
+
+    // In-game quick shop (bottom bar): rapid fire, shield, repair kit, ammo.
+    // Shields and repair kits cost more every time you buy one in the same mission.
+    static final Rectangle[] QUICK_SLOTS = new Rectangle[4];
+    static final String[] QUICK_NAMES = {"RAPID FIRE", "SHIELD", "REPAIR KIT", "AMMO"};
+    static final int[] QUICK_COSTS = {75, 90, 120, 40};
+    static final double[] QUICK_PRICE_GROWTH = {1.0, 1.5, 1.5, 1.0};
 
     static {
         for (int i = 0; i < Upgrades.TRACKS; i++) {
-            UPGRADE_CARDS[i] = new Rectangle(30 + i * 190, 300, 170, 205);
+
+            UPGRADE_CARDS[i] = new Rectangle(345 + (i % 2) * 226, 72 + (i / 2) * 230, 214, 220);
+
+            Rectangle c = UPGRADE_CARDS[i];
+            BUY_BUTTONS[i] = new Rectangle(c.x + 12, c.y + c.height - 46, c.width - 24 - 72, 34);
+            SELL_BUTTONS[i] = new Rectangle(c.x + c.width - 12 - 66, c.y + c.height - 46, 66, 34);
+        }
+
+        for (int i = 0; i < QUICK_SLOTS.length; i++) {
+            QUICK_SLOTS[i] = new Rectangle(354 + i * 110, 548, 104, 46);
         }
     }
 
-    private static final Rectangle HARDCORE_BUTTON = new Rectangle(305, 300, 190, 44);
-    private static final Rectangle ADVENTURE_BUTTON = new Rectangle(305, 350, 190, 44);
-    private static final Rectangle LEVEL_BUTTON = new Rectangle(305, 400, 190, 44);
+    /** A little "+25" that floats up from where something happened. */
+    static final class FloatingText {
+        final String text;
+        final Color color;
+        double x;
+        double y;
+        int life = 60;
 
-    private static final Rectangle EASY_BUTTON = new Rectangle(305, 300, 190, 44);
-    private static final Rectangle MODERATE_BUTTON = new Rectangle(305, 350, 190, 44);
-    private static final Rectangle HARD_BUTTON = new Rectangle(305, 400, 190, 44);
+        FloatingText(String text, double x, double y, Color color) {
+            this.text = text;
+            this.x = x;
+            this.y = y;
+            this.color = color;
+        }
+    }
+
+    /** Everything an undo in the hangar needs to put back. */
+    static final class HangarState {
+        final int[] levels;
+        final int credits;
+        final double[] parts;
+        final int lives;
+        final String label;
+
+        HangarState(int[] levels, int credits, double[] parts, int lives, String label) {
+            this.levels = levels;
+            this.credits = credits;
+            this.parts = parts;
+            this.lives = lives;
+            this.label = label;
+        }
+    }
 
     // Game objects
-    private final SpaceBackground background =
+    final SpaceBackground background =
         new SpaceBackground(SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    private Player player;
-    private Boss boss;
-    private final Boss storyBoss = new Boss(2, 100, "", 0);   // only used to draw story art
-    private final Player previewPlayer = new Player();        // the ship on the upgrade screen
+    Player player;
+    Boss boss;
+    final Boss storyBoss = new Boss(2, 100, "", 0);   // only used to draw story art
+    final Player previewPlayer = new Player();        // the ship in the hangar and menu
+    final ArrayList<Guardian> guardians = new ArrayList<>();
 
-    private final ArrayList<Bullet> bullets = new ArrayList<>();
-    private final ArrayList<Enemy> enemies = new ArrayList<>();
-    private final ArrayList<BossBullet> enemyBullets = new ArrayList<>();
-    private final ArrayList<PowerUp> powerUps = new ArrayList<>();
-    private final ArrayList<Explosion> explosions = new ArrayList<>();
+    final ArrayList<Bullet> bullets = new ArrayList<>();
+    final ArrayList<Enemy> enemies = new ArrayList<>();
+    final ArrayList<BossBullet> enemyBullets = new ArrayList<>();
+    final ArrayList<PowerUp> powerUps = new ArrayList<>();
+    final ArrayList<Explosion> explosions = new ArrayList<>();
 
-    private Timer gameTimer;
-    private int frame = 0;               // counts every tick (for blinking text)
+    Timer gameTimer;
+    int frame = 0;               // counts every tick (for blinking text)
 
-    private boolean shooting = false;
+    boolean shooting = false;
 
     // Score and lives
-    private int score = 0;
-    private int lives = START_LIVES;
+    int score = 0;
+    int lives = START_LIVES;
 
     // Timers (all counted in game ticks, 60 ticks = about 1 second)
-    private int shotCooldown = 0;
-    private int spawnCooldown = 0;
-    private int damageCooldown = 0;      // invulnerable while > 0
-    private int rapidTimer = 0;          // rapid-fire power-up time left
-    private int shieldTimer = 0;         // shield power-up time left
-    private int bossDeathTimer = 0;      // boss explosion sequence
-    private int bossSupplyTimer = 0;     // next supply drop during a boss fight
-    private int bannerTimer = 0;
-    private int warningTimer = 0;
-    private int radioTimer = 0;
-    private int pickupTimer = 0;
-    private int shakeTimer = 0;
-    private int gameOverTimer = 0;
+    int shotCooldown = 0;
+    int spawnCooldown = 0;
+    int damageCooldown = 0;      // invulnerable while > 0
+    int rapidTimer = 0;          // rapid-fire power-up time left
+    int shieldTimer = 0;         // shield power-up time left
+    int bossDeathTimer = 0;      // boss explosion sequence
+    int bossSupplyTimer = 0;     // next supply drop during a boss fight
+    int bannerTimer = 0;
+    int warningTimer = 0;
+    int radioTimer = 0;
+    int pickupTimer = 0;
+    int shakeTimer = 0;
+    int gameOverTimer = 0;
 
-    // Upgrades, credits and the limited magazine
-    private Upgrades upgrades = new Upgrades();
-    private int ammo = 30;
-    private int reloadTimer = 0;            // counts down while reloading
-    private int reloadTotal = 1;
-    private int emptyClickTimer = 0;
-    private int bossHitSoundTimer = 0;
-    private int bossReward = 0;             // credits for the boss on screen
-    private int missionStartCredits = 0;
-    private int nextBossIndex = 0;          // which boss of the mission comes next
-    private String upgradeMessage = "";
-    private boolean upgradeMessageGood = true;
-    private int upgradeMessageTimer = 0;
-    private Runnable upgradeOnFinish;
+    // Upgrades and money.
+    //   hangar   = your wallet and your ship. It is SAVED to disk.
+    //   upgrades = the ship used in the current run. This is the hangar ship,
+    //              except in LEVEL mode, where every difficulty has a fixed ship.
+    Upgrades hangar = new Upgrades();
+    Upgrades upgrades = hangar;
 
-    private final SoundManager sound = SoundManager.get();
+    // Wear and damage on the ship's parts (cannons, ammo feed, engines)
+    final ShipParts parts = new ShipParts();
+    double[] missionStartParts = parts.snapshot();
+
+    int ammo = 36;
+    int reloadTimer = 0;                // counts down while reloading
+    int reloadTotal = 1;
+    int emptyClickTimer = 0;
+    int bossHitSoundTimer = 0;
+    int bossReward = 0;                 // credits for the boss on screen
+    int nextBossIndex = 0;              // which boss of the mission comes next
+    int boostCooldown = 0;              // SHIFT boost recharge (ENGINES MK II)
+
+    // Hangar / upgrade station
+    String upgradeMessage = "";
+    boolean upgradeMessageGood = true;
+    int upgradeMessageTimer = 0;
+    Runnable upgradeOnFinish;
+    boolean hangarFromMenu = false;     // true when opened from the main menu
+    final ArrayDeque<HangarState> undoStack = new ArrayDeque<>();
+
+    // Money earned in this run, and the quick shop that works during play
+    int creditsEarned = 0;
+    int aliensDestroyed = 0;
+    int quickBuyCooldown = 0;
+    final int[] quickFlash = new int[4];
+    final int[] quickBought = new int[4];     // how many of each item were bought this mission
+    int dropCooldown = 0;                     // at most one alien power-up drop every few seconds
+    int resetConfirmTimer = 0;
+    int helpPage = 0;
+
+    // Space hazards, floating text, and how hard the aliens are right now
+    final ArrayList<Hazard> hazards = new ArrayList<>();
+    final ArrayList<FloatingText> floatingTexts = new ArrayList<>();
+    int asteroidTimer = 0;
+    int meteorTimer = 0;
+    int asteroidEvery = 0;
+    int meteorEvery = 0;
+    double hazardsFrom = 0.2;
+    double baseSpeed = 1.0;
+    double speedRamp = 0.3;
+
+    // Boss guardians (HARDCORE) and special-move warnings
+    int guardianCount = 0;
+    int guardianRespawn = 0;
+    boolean guardiansDeployed = false;
+    String moveWarning = "";
+    int moveWarningTimer = 0;
+
+    // Alerts about damaged parts, and the red flash when you are hit
+    String systemAlert = "";
+    int systemAlertTimer = 0;
+    int hurtFlash = 0;
+
+    final SoundManager sound = SoundManager.get();
+    final Screens screens = new Screens(this);
 
     // Enemy spawning
-    private int baseEnemySpawnInterval = 90;
-    private int currentEnemySpawnInterval = 90;
-    private double zigzagAt = 0.4;
-    private double gunnerAt = 2.0;
+    int baseEnemySpawnInterval = 90;
+    int currentEnemySpawnInterval = 90;
+    double zigzagAt = 0.4;
+    double gunnerAt = 2.0;
+    double diverAt = 2.0;
+    double looperAt = 2.0;
+    double dasherAt = 2.0;
 
     // Hardcore progression and boss encounters
-    private int hardcoreTicks = 0;
-    private int hardcoreBossesDefeated = 0;
-    private int enemiesSinceBoss = 0;
-    private int bossSpawnThreshold = 20;
+    int hardcoreTicks = 0;
+    int hardcoreBossesDefeated = 0;
+    int enemiesSinceBoss = 0;
+    int bossSpawnThreshold = 20;
 
     // Mission system (ADVENTURE uses the Mission objects, LEVEL uses plain numbers)
-    private Mission mission = null;
-    private int missionIndex = 0;
-    private int missionNumber = 1;
-    private int enemiesDefeated = 0;
-    private int missionTarget = 10;
-    private int missionTicks = 0;
-    private int missionStartScore = 0;
-    private int nextRadio = 0;
-    private String missionName = "";
-    private String missionSummary = "";
+    Mission mission = null;
+    int missionIndex = 0;
+    int missionNumber = 1;
+    int enemiesDefeated = 0;
+    int missionTarget = 10;
+    int missionTicks = 0;
+    int missionStartScore = 0;
+    int nextRadio = 0;
+    String missionName = "";
+    String missionSummary = "";
 
     // On-screen messages
-    private String bannerTitle = "";
-    private String bannerSubtitle = "";
-    private String radioSpeaker = "";
-    private String radioText = "";
-    private String pickupText = "";
+    String bannerTitle = "";
+    String bannerSubtitle = "";
+    String radioSpeaker = "";
+    String radioText = "";
+    String pickupText = "";
 
     // Story scenes
-    private Story.Page[] storyPages;
-    private int storyPageIndex = 0;
-    private double storyChars = 0;
-    private Runnable storyOnFinish;
+    Story.Page[] storyPages;
+    int storyPageIndex = 0;
+    double storyChars = 0;
+    Runnable storyOnFinish;
 
-    // High scores
-    private final Properties highScores = new Properties();
-    private boolean newHighScore = false;
+    // Save data: best scores, wallet, upgrades and sound settings
+    final Properties saveData = new Properties();
+    boolean newHighScore = false;
 
-    private final Random random = new Random();
+    final Random random = new Random();
 
     GamePanel() {
 
@@ -226,7 +357,7 @@ public class GamePanel extends JPanel {
         setBackground(Color.BLACK);
         setFocusable(true);
 
-        loadHighScores();
+        loadSaveData();
         loadMenuBackground();
         initializeGameObjects();
 
@@ -235,6 +366,9 @@ public class GamePanel extends JPanel {
 
         gameTimer = new Timer(16, e -> step());
         gameTimer.start();
+
+        // Save the wallet and ship when the window is closed
+        Runtime.getRuntime().addShutdownHook(new Thread(this::saveProgress));
 
     }
 
@@ -248,7 +382,7 @@ public class GamePanel extends JPanel {
             background.update();
             updateExplosions();
 
-            if (currentState == GameState.UPGRADE) {
+            if (currentState == GameState.UPGRADE || currentState == GameState.MENU) {
                 previewPlayer.animate();
             }
 
@@ -263,6 +397,10 @@ public class GamePanel extends JPanel {
             if (upgradeMessageTimer > 0) {
                 upgradeMessageTimer--;
             }
+
+            if (resetConfirmTimer > 0) {
+                resetConfirmTimer--;
+            }
         }
 
         updateMusic();
@@ -270,7 +408,7 @@ public class GamePanel extends JPanel {
     }
 
     /** Picks the background music that fits what is on screen. */
-    private void updateMusic() {
+    void updateMusic() {
 
         SoundManager.Track track;
 
@@ -298,7 +436,7 @@ public class GamePanel extends JPanel {
     // 2. STARTING GAMES, MISSIONS AND STORY SCENES
     // ===============================================================
 
-    private void initializeGameObjects() {
+    void initializeGameObjects() {
 
         player = new Player();
 
@@ -317,11 +455,35 @@ public class GamePanel extends JPanel {
         score = 0;
         lives = START_LIVES;
 
-        upgrades = new Upgrades();
+        upgrades = hangar;
+        parts.reset();
+        missionStartParts = parts.snapshot();
         refreshPlayerLoadout();
         emptyClickTimer = 0;
         bossHitSoundTimer = 0;
-        missionStartCredits = 0;
+        boostCooldown = 0;
+
+        hazards.clear();
+        guardians.clear();
+        floatingTexts.clear();
+        creditsEarned = 0;
+        aliensDestroyed = 0;
+        quickBuyCooldown = 0;
+        java.util.Arrays.fill(quickBought, 0);
+        asteroidTimer = 0;
+        meteorTimer = 0;
+        asteroidEvery = 0;
+        meteorEvery = 0;
+        baseSpeed = 1.0;
+        speedRamp = 0.3;
+        diverAt = 2.0;
+        looperAt = 2.0;
+        dasherAt = 2.0;
+        guardianCount = 0;
+        guardianRespawn = 0;
+        moveWarningTimer = 0;
+        systemAlertTimer = 0;
+        hurtFlash = 0;
 
         shotCooldown = 0;
         spawnCooldown = 0;
@@ -356,7 +518,7 @@ public class GamePanel extends JPanel {
 
     }
 
-    private void startGame(GameMode mode, Difficulty difficulty) {
+    void startGame(GameMode mode, Difficulty difficulty) {
 
         selectedMode = mode;
         selectedDifficulty = difficulty;
@@ -383,8 +545,18 @@ public class GamePanel extends JPanel {
 
         baseEnemySpawnInterval = 95;
         currentEnemySpawnInterval = baseEnemySpawnInterval;
-        zigzagAt = 0.3;
-        gunnerAt = 0.7;
+        // Over time: more alien types, more asteroids and meteors, faster aliens
+        zigzagAt = 0.12;
+        gunnerAt = 0.30;
+        diverAt = 0.45;
+        looperAt = 0.60;
+        dasherAt = 0.80;
+
+        asteroidEvery = 480;
+        meteorEvery = 1100;
+        hazardsFrom = 0.15;
+        asteroidTimer = 600;
+        meteorTimer = 1500;
 
         bannerTitle = "HARDCORE";
         bannerSubtitle = "SURVIVE AS LONG AS YOU CAN";
@@ -398,7 +570,7 @@ public class GamePanel extends JPanel {
     }
 
     /** Begins one mission of the ADVENTURE campaign (index 0 = Mission 1). */
-    private void startMission(int index) {
+    void startMission(int index) {
 
         missionIndex = index;
         missionNumber = index + 1;
@@ -407,14 +579,20 @@ public class GamePanel extends JPanel {
     }
 
     /** Starts any Mission: a campaign mission or one of the LEVEL difficulties. */
-    private void beginMission(Mission m, int index) {
+    void beginMission(Mission m, int index) {
 
         mission = m;
 
         // LEVEL mode gives you a fixed ship; the campaign keeps the ship you built
         if (m.preset != null) {
             upgrades = Upgrades.preset(m.preset[0], m.preset[1], m.preset[2], m.preset[3]);
+            parts.reset();
+        } else {
+            upgrades = hangar;
         }
+
+        // A retry puts the ship parts back the way they were when the mission began
+        missionStartParts = parts.snapshot();
 
         missionName = m.name;
         missionTarget = (m.objective == Mission.Objective.KILLS) ? m.target : 0;
@@ -426,6 +604,17 @@ public class GamePanel extends JPanel {
 
         zigzagAt = m.zigzagAt;
         gunnerAt = m.gunnerAt;
+        diverAt = m.diverAt;
+        looperAt = m.looperAt;
+        dasherAt = m.dasherAt;
+
+        asteroidEvery = m.asteroidEvery;
+        meteorEvery = m.meteorEvery;
+        hazardsFrom = m.hazardsFrom;
+        asteroidTimer = m.asteroidEvery;
+        meteorTimer = m.meteorEvery;
+        baseSpeed = m.baseSpeed;
+        speedRamp = m.speedRamp;
         baseEnemySpawnInterval = m.spawnInterval;
         currentEnemySpawnInterval = m.spawnInterval;
 
@@ -434,6 +623,17 @@ public class GamePanel extends JPanel {
         enemies.clear();
         enemyBullets.clear();
         powerUps.clear();
+        hazards.clear();
+        guardians.clear();
+        floatingTexts.clear();
+        creditsEarned = 0;
+        aliensDestroyed = 0;
+        java.util.Arrays.fill(quickBought, 0);
+        guardianCount = 0;
+        boostCooldown = 0;
+        moveWarningTimer = 0;
+        systemAlertTimer = 0;
+        hurtFlash = 0;
         boss = null;
 
         // 4 lives, plus 1 per hull upgrade, plus a bonus life after the first campaign mission
@@ -442,7 +642,6 @@ public class GamePanel extends JPanel {
                          Math.max(lives, START_LIVES + upgrades.getHullLevel()) + bonus);
 
         missionStartScore = score;
-        missionStartCredits = upgrades.getCredits();
 
         shotCooldown = 0;
         damageCooldown = 0;
@@ -478,7 +677,7 @@ public class GamePanel extends JPanel {
         requestFocusInWindow();
     }
 
-    private String describeGoal(Mission m) {
+    String describeGoal(Mission m) {
 
         String text = "DESTROY " + m.target + " ALIENS";
 
@@ -492,7 +691,7 @@ public class GamePanel extends JPanel {
     }
 
     /** Gives the ship its current upgrades and a full magazine. */
-    private void refreshPlayerLoadout() {
+    void refreshPlayerLoadout() {
 
         player.setLoadout(upgrades);
         ammo = upgrades.getAmmoMax();
@@ -500,14 +699,15 @@ public class GamePanel extends JPanel {
     }
 
     /** What happens after "GAME OVER": retry the mission, or restart the mode. */
-    private void retry() {
+    void retry() {
 
         if (selectedMode == GameMode.ADVENTURE && mission != null) {
 
-            // Same ship and credits as at the start of the mission
+            // Money you earned is yours to keep. The score and the ship's parts
+            // go back to how they were when the mission began.
             score = missionStartScore;
             lives = START_LIVES;
-            upgrades.setCredits(missionStartCredits);
+            parts.restore(missionStartParts);
             explosions.clear();
             startMission(missionIndex);
 
@@ -518,7 +718,7 @@ public class GamePanel extends JPanel {
     }
 
     /** Called when the player presses ENTER on the MISSION COMPLETE screen. */
-    private void continueAfterMission() {
+    void continueAfterMission() {
 
         if (selectedMode == GameMode.ADVENTURE && mission != null) {
 
@@ -527,7 +727,7 @@ public class GamePanel extends JPanel {
             showStory(Story.AFTER_MISSION[finished], () -> {
                 if (finished + 1 < Mission.CAMPAIGN.length) {
                     final int next = finished + 1;
-                    openUpgradeStation(() -> startMission(next));
+                    openUpgradeStation(() -> startMission(next), false);
                 } else {
                     showVictory();
                 }
@@ -544,26 +744,43 @@ public class GamePanel extends JPanel {
         }
     }
 
-    // ---------- Upgrade station ----------
+    // ---------- Hangar / upgrade station ----------
 
-    /** Shows the upgrade screen. "onFinish" runs when the player launches. */
-    private void openUpgradeStation(Runnable onFinish) {
+    /**
+     * Shows the hangar. "onFinish" runs when the player launches (or goes back).
+     * fromMenu = true when it was opened from the main menu.
+     */
+    void openUpgradeStation(Runnable onFinish, boolean fromMenu) {
 
         upgradeOnFinish = onFinish;
+        hangarFromMenu = fromMenu;
         upgradeMessage = "";
         upgradeMessageTimer = 0;
+        undoStack.clear();
 
         shooting = false;
         bullets.clear();
         enemyBullets.clear();
 
-        previewPlayer.setLoadout(upgrades);
+        previewPlayer.setLoadout(hangar);
 
         background.setScene(SpaceBackground.Scene.DEFAULT);
         currentState = GameState.UPGRADE;
     }
 
-    private void finishUpgradeStation() {
+    void openHangarFromMenu() {
+
+        parts.reset();
+
+        openUpgradeStation(() -> {
+            saveProgress();
+            currentState = GameState.MENU;
+        }, true);
+    }
+
+    void finishUpgradeStation() {
+
+        undoStack.clear();
 
         Runnable next = upgradeOnFinish;
         upgradeOnFinish = null;
@@ -573,40 +790,135 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void buyUpgrade(int track) {
+    /** Remembers the hangar as it is now, so the next action can be undone. */
+    void pushUndo(String label) {
 
-        if (upgrades.isMaxed(track)) {
+        undoStack.push(new HangarState(hangar.levelsSnapshot(), hangar.getCredits(),
+                                       parts.snapshot(), lives, label));
 
-            showUpgradeMessage("ALREADY FULLY UPGRADED", false);
-
-        } else if (!upgrades.canAfford(track)) {
-
-            sound.play(SoundManager.Sfx.EMPTY);
-            showUpgradeMessage("NOT ENOUGH CREDITS - COST " + upgrades.nextCost(track), false);
-
-        } else {
-
-            upgrades.buy(track);
-
-            // Armour repairs the ship straight away
-            if (track == Upgrades.HULL) {
-                lives = Math.min(MAX_LIVES, lives + 1);
-            }
-
-            previewPlayer.setLoadout(upgrades);
-            sound.play(SoundManager.Sfx.UPGRADE);
-            showUpgradeMessage(Upgrades.NAMES[track] + " UPGRADED: " + upgrades.currentText(track), true);
+        while (undoStack.size() > 30) {
+            undoStack.removeLast();
         }
     }
 
-    private void showUpgradeMessage(String text, boolean good) {
+    void buyUpgrade(int track) {
+
+        if (hangar.isMaxed(track)) {
+
+            sound.play(SoundManager.Sfx.EMPTY);
+            showUpgradeMessage(Upgrades.NAMES[track] + " IS FULLY UPGRADED", false);
+
+        } else if (!hangar.canAfford(track)) {
+
+            sound.play(SoundManager.Sfx.EMPTY);
+            showUpgradeMessage("NOT ENOUGH CREDITS - YOU NEED " + hangar.nextCost(track), false);
+
+        } else {
+
+            boolean wasPhase2 = hangar.isPhase2(track);
+            pushUndo(hangar.displayName(track) + " UPGRADE");
+            hangar.buy(track);
+
+            // Armour repairs the ship straight away
+            if (track == Upgrades.HULL && !wasPhase2) {
+                lives = Math.min(MAX_LIVES, lives + 1);
+            }
+
+            previewPlayer.setLoadout(hangar);
+            sound.play(SoundManager.Sfx.UPGRADE);
+
+            if (!wasPhase2 && hangar.isPhase2(track) && !hangar.isMaxed(track)) {
+                showUpgradeMessage(Upgrades.NAMES[track] + " MAXED - " + Upgrades.PHASE2_NAMES[track] + " UNLOCKED!", true);
+            } else {
+                showUpgradeMessage(hangar.ownedName(track) + " UPGRADED: " + hangar.currentText(track), true);
+            }
+
+            saveProgress();
+        }
+    }
+
+    /** Sells the top level of an upgrade for part of its price. */
+    void sellUpgrade(int track) {
+
+        if (!hangar.canRefund(track)) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            showUpgradeMessage("NOTHING TO REFUND ON " + Upgrades.NAMES[track], false);
+            return;
+        }
+
+        boolean phase1Hull = (track == Upgrades.HULL && hangar.getLevel(track) <= hangar.getPhase1Max(track));
+        int value = hangar.refundValue(track);
+        String name = hangar.ownedName(track);
+
+        pushUndo(name + " REFUND");
+        hangar.refund(track);
+
+        // Selling armour in the middle of a run takes away the life it gave
+        if (phase1Hull && !hangarFromMenu) {
+            lives = Math.max(1, lives - 1);
+        }
+
+        previewPlayer.setLoadout(hangar);
+        sound.play(SoundManager.Sfx.REFUND);
+        showUpgradeMessage(name + " REFUNDED  +" + value + " CREDITS", true);
+        saveProgress();
+    }
+
+    /** Fully repairs all ship parts, if you can pay for it. */
+    void repairAllParts() {
+
+        int cost = parts.repairAllCost();
+
+        if (cost <= 0) {
+            showUpgradeMessage("ALL SYSTEMS ARE ALREADY AT 100%", true);
+            return;
+        }
+
+        if (hangar.getCredits() < cost) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            showUpgradeMessage("REPAIRS COST " + cost + " CREDITS", false);
+            return;
+        }
+
+        pushUndo("REPAIRS");
+        hangar.addCredits(-cost);
+        parts.reset();
+
+        sound.play(SoundManager.Sfx.UPGRADE);
+        showUpgradeMessage("SHIP FULLY REPAIRED  -" + cost + " CREDITS", true);
+        saveProgress();
+    }
+
+    /** Takes back the last buy, refund or repair, with a full refund. */
+    void undoHangar() {
+
+        if (undoStack.isEmpty()) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            showUpgradeMessage("NOTHING TO UNDO", false);
+            return;
+        }
+
+        HangarState state = undoStack.pop();
+
+        hangar.restoreLevels(state.levels);
+        hangar.setCredits(state.credits);
+        parts.restore(state.parts);
+        lives = state.lives;
+
+        previewPlayer.setLoadout(hangar);
+        sound.play(SoundManager.Sfx.UNDO);
+        showUpgradeMessage("UNDONE: " + state.label, true);
+        saveProgress();
+    }
+
+    void showUpgradeMessage(String text, boolean good) {
 
         upgradeMessage = text;
         upgradeMessageGood = good;
-        upgradeMessageTimer = 150;
+        upgradeMessageTimer = 160;
     }
 
-    private void showVictory() {
+    void showVictory() {
 
         sound.play(SoundManager.Sfx.VICTORY);
         shooting = false;
@@ -617,7 +929,7 @@ public class GamePanel extends JPanel {
         currentState = GameState.VICTORY;
     }
 
-    private void returnToMenu() {
+    void returnToMenu() {
 
         shooting = false;
         boss = null;
@@ -628,6 +940,14 @@ public class GamePanel extends JPanel {
         enemies.clear();
         enemyBullets.clear();
         powerUps.clear();
+        hazards.clear();
+        guardians.clear();
+        floatingTexts.clear();
+
+        parts.reset();
+        upgrades = hangar;
+        previewPlayer.setLoadout(hangar);
+        saveProgress();
 
         background.setScene(SpaceBackground.Scene.DEFAULT);
         currentState = GameState.MENU;
@@ -636,7 +956,7 @@ public class GamePanel extends JPanel {
 
     // ---------- Story scenes ----------
 
-    private void showStory(Story.Page[] pages, Runnable onFinish) {
+    void showStory(Story.Page[] pages, Runnable onFinish) {
 
         storyPages = pages;
         storyPageIndex = 0;
@@ -652,7 +972,7 @@ public class GamePanel extends JPanel {
     }
 
     /** First press finishes the typing; the next press moves to the next page. */
-    private void advanceStory() {
+    void advanceStory() {
 
         Story.Page page = storyPages[storyPageIndex];
 
@@ -669,7 +989,7 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void finishStory() {
+    void finishStory() {
 
         Runnable next = storyOnFinish;
         storyOnFinish = null;
@@ -679,9 +999,9 @@ public class GamePanel extends JPanel {
         }
     }
 
-    // ---------- High scores ----------
+    // ---------- Save data (best scores, wallet, upgrades, sound) ----------
 
-    private String scoreKey() {
+    String scoreKey() {
 
         if (selectedMode == GameMode.LEVEL) {
             return "level_" + selectedDifficulty.name().toLowerCase();
@@ -690,51 +1010,75 @@ public class GamePanel extends JPanel {
         return selectedMode.name().toLowerCase();
     }
 
-    private int bestFor(String key) {
+    int bestFor(String key) {
 
         try {
-            return Integer.parseInt(highScores.getProperty(key, "0"));
+            return Integer.parseInt(saveData.getProperty(key, "0"));
         } catch (NumberFormatException e) {
             return 0;
         }
     }
 
-    private void recordScore() {
+    void recordScore() {
 
         if (score > bestFor(scoreKey())) {
-            highScores.setProperty(scoreKey(), String.valueOf(score));
+            saveData.setProperty(scoreKey(), String.valueOf(score));
             newHighScore = true;
-            saveHighScores();
         }
+
+        saveProgress();
     }
 
-    private void loadHighScores() {
+    void loadSaveData() {
 
-        File file = new File(SCORE_FILE);
+        File file = new File(SAVE_FILE);
 
-        if (!file.exists()) {
+        if (NO_SAVE || !file.exists()) {
             return;
         }
 
         try (FileInputStream in = new FileInputStream(file)) {
-            highScores.load(in);
+
+            saveData.load(in);
+            hangar.load(saveData);
+            sound.setSoundOn(!"off".equals(saveData.getProperty("sound")));
+            sound.setMusicOn(!"off".equals(saveData.getProperty("music")));
+
         } catch (IOException e) {
-            System.out.println("Could not read high scores: " + e.getMessage());
+            System.out.println("Could not read the save file: " + e.getMessage());
         }
     }
 
-    private void saveHighScores() {
+    /** Writes best scores, the wallet, the ship's upgrades and the sound settings to disk. */
+    synchronized void saveProgress() {
 
-        try (FileOutputStream out = new FileOutputStream(SCORE_FILE)) {
-            highScores.store(out, "Best scores");
-        } catch (IOException e) {
-            System.out.println("Could not save high scores: " + e.getMessage());
+        if (NO_SAVE) {
+            return;
         }
+
+        hangar.save(saveData);
+        saveData.setProperty("sound", sound.isSoundOn() ? "on" : "off");
+        saveData.setProperty("music", sound.isMusicOn() ? "on" : "off");
+
+        try (FileOutputStream out = new FileOutputStream(SAVE_FILE)) {
+            saveData.store(out, "Starfall save data");
+        } catch (IOException e) {
+            System.out.println("Could not save progress: " + e.getMessage());
+        }
+    }
+
+    /** Erases the wallet, the ship's upgrades and the best scores. */
+    void resetSaveData() {
+
+        hangar.reset();
+        saveData.clear();
+        previewPlayer.setLoadout(hangar);
+        saveProgress();
     }
 
     // LOAD THE EARTH BACKGROUND IMAGE (optional - the game works without it)
 
-    private void loadMenuBackground() {
+    void loadMenuBackground() {
 
         try {
             File imageFile = new File("resources/backgrounds/earth-background.jpg");
@@ -759,13 +1103,22 @@ public class GamePanel extends JPanel {
     // 3. KEYBOARD AND MOUSE CONTROLS
     // ===============================================================
 
-    /** Connects a key (like "pressed UP") to a piece of code. */
-    private void bind(String keyStroke, Runnable action) {
+    /**
+     * Connects a key (like "pressed UP") to a piece of code. The same key also
+     * works while SHIFT is held, so boosting never breaks the other controls.
+     */
+    void bind(String keyStroke, Runnable action) {
 
-        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(
-            KeyStroke.getKeyStroke(keyStroke),
-            keyStroke
-        );
+        bindExact(keyStroke, action);
+
+        if (!keyStroke.startsWith("shift ")) {
+            bindExact("shift " + keyStroke, action);
+        }
+    }
+
+    void bindExact(String keyStroke, Runnable action) {
+
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(keyStroke), keyStroke);
 
         getActionMap().put(keyStroke, new AbstractAction() {
 
@@ -777,9 +1130,9 @@ public class GamePanel extends JPanel {
         });
     }
 
-    private void setupControls() {
+    void setupControls() {
 
-        // MOVE: arrow keys or WASD
+        // MOVE: arrow keys or WASD. On the help screen, left/right change the page.
         for (String key : new String[]{"UP", "W"}) {
             bind("pressed " + key,  () -> { if (currentState == GameState.PLAYING) player.setMovingUp(true); });
             bind("released " + key, () -> player.setMovingUp(false));
@@ -791,12 +1144,24 @@ public class GamePanel extends JPanel {
         }
 
         for (String key : new String[]{"LEFT", "A"}) {
-            bind("pressed " + key,  () -> { if (currentState == GameState.PLAYING) player.setMovingLeft(true); });
+            bind("pressed " + key, () -> {
+                if (currentState == GameState.PLAYING) {
+                    player.setMovingLeft(true);
+                } else if (currentState == GameState.INSTRUCTIONS) {
+                    helpPage = Math.max(0, helpPage - 1);
+                }
+            });
             bind("released " + key, () -> player.setMovingLeft(false));
         }
 
         for (String key : new String[]{"RIGHT", "D"}) {
-            bind("pressed " + key,  () -> { if (currentState == GameState.PLAYING) player.setMovingRight(true); });
+            bind("pressed " + key, () -> {
+                if (currentState == GameState.PLAYING) {
+                    player.setMovingRight(true);
+                } else if (currentState == GameState.INSTRUCTIONS) {
+                    helpPage = Math.min(2, helpPage + 1);
+                }
+            });
             bind("released " + key, () -> player.setMovingRight(false));
         }
 
@@ -804,45 +1169,41 @@ public class GamePanel extends JPanel {
         bind("pressed SPACE",  () -> { if (currentState == GameState.PLAYING) shooting = true; });
         bind("released SPACE", () -> shooting = false);
 
-        // ENTER = confirm / continue
+        // BOOST (needs ENGINES MK II)
+        bind("pressed SHIFT", this::tryBoost);
+
+        // ENTER = confirm / continue,  ESC = back / pause / skip,  P = pause
         bind("pressed ENTER", this::handleConfirm);
-
-        // ESC = back / pause / skip story
         bind("pressed ESCAPE", this::handleEscape);
-
-        // P = pause
         bind("pressed P", this::togglePause);
 
-        // I = how to play (from the main menu)
+        // I = how to play,  H = hangar (from the main menu)
         bind("pressed I", () -> {
             if (currentState == GameState.MENU) {
+                helpPage = 0;
                 currentState = GameState.INSTRUCTIONS;
             }
         });
 
-        // R = reload while playing, retry after game over
-        bind("pressed R", () -> {
-            if (currentState == GameState.GAME_OVER) {
-                retry();
-            } else if (currentState == GameState.PLAYING) {
-                startManualReload();
+        bind("pressed H", () -> {
+            if (currentState == GameState.MENU) {
+                sound.play(SoundManager.Sfx.CLICK);
+                openHangarFromMenu();
             }
         });
 
-        // V = mute / unmute everything
-        bind("pressed V", () -> sound.toggleAll());
+        // R = reload (playing), repair (hangar), retry (game over)
+        bind("pressed R", () -> {
+            if (currentState == GameState.GAME_OVER && gameOverTimer >= 30) {
+                retry();
+            } else if (currentState == GameState.PLAYING) {
+                startManualReload();
+            } else if (currentState == GameState.UPGRADE && !hangarFromMenu) {
+                repairAllParts();
+            }
+        });
 
-        // 1 - 4 = buy an upgrade on the upgrade screen
-        for (int i = 0; i < Upgrades.TRACKS; i++) {
-            final int track = i;
-            bind("pressed " + (i + 1), () -> {
-                if (currentState == GameState.UPGRADE) {
-                    buyUpgrade(track);
-                }
-            });
-        }
-
-        // M = back to menu
+        // M = back to the main menu
         bind("pressed M", () -> {
             if (currentState == GameState.GAME_OVER
                 || currentState == GameState.MISSION_COMPLETE
@@ -851,9 +1212,50 @@ public class GamePanel extends JPanel {
                 returnToMenu();
             }
         });
+
+        // V = mute / unmute everything
+        bind("pressed V", () -> {
+            sound.toggleAll();
+            saveProgress();
+        });
+
+        // Z, BACKSPACE or CTRL+Z = undo in the hangar
+        Runnable undo = () -> {
+            if (currentState == GameState.UPGRADE) {
+                undoHangar();
+            }
+        };
+        bind("pressed Z", undo);
+        bind("pressed BACK_SPACE", undo);
+        bindExact("ctrl pressed Z", undo);
+
+        // 1 - 4: buy an upgrade (hangar), use the quick shop (playing), or pick a help page
+        for (int i = 0; i < Upgrades.TRACKS; i++) {
+
+            final int slot = i;
+
+            bind("pressed " + (i + 1), () -> {
+                if (currentState == GameState.UPGRADE) {
+                    buyUpgrade(slot);
+                } else if (currentState == GameState.PLAYING) {
+                    quickBuy(slot);
+                } else if (currentState == GameState.INSTRUCTIONS && slot < 3) {
+                    helpPage = slot;
+                }
+            });
+
+            // SHIFT + 1 - 4 sells an upgrade in the hangar (bound after the line above on purpose)
+            bindExact("shift pressed " + (i + 1), () -> {
+                if (currentState == GameState.UPGRADE) {
+                    sellUpgrade(slot);
+                } else if (currentState == GameState.PLAYING) {
+                    quickBuy(slot);
+                }
+            });
+        }
     }
 
-    private void handleConfirm() {
+    void handleConfirm() {
 
         if (currentState != GameState.PLAYING && currentState != GameState.PAUSED) {
             sound.play(SoundManager.Sfx.CLICK);
@@ -886,6 +1288,10 @@ public class GamePanel extends JPanel {
                 finishUpgradeStation();
                 break;
 
+            case PAUSED:
+                togglePause();
+                break;
+
             case MISSION_COMPLETE:
                 continueAfterMission();
                 break;
@@ -903,18 +1309,25 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void handleEscape() {
+    void handleEscape() {
 
         switch (currentState) {
 
             case INSTRUCTIONS:
             case SETTINGS:
             case MODE_SELECT:
+                saveProgress();
                 currentState = GameState.MENU;
                 break;
 
             case DIFFICULTY_SELECT:
                 currentState = GameState.MODE_SELECT;
+                break;
+
+            case UPGRADE:
+                if (hangarFromMenu) {
+                    finishUpgradeStation();
+                }
                 break;
 
             case STORY:
@@ -931,7 +1344,7 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void togglePause() {
+    void togglePause() {
 
         if (currentState == GameState.PLAYING) {
             shooting = false;
@@ -943,7 +1356,7 @@ public class GamePanel extends JPanel {
 
     // MOUSE CONTROLS FOR MENUS
 
-    private void setupMouseControls() {
+    void setupMouseControls() {
 
         MouseAdapter mouseHandler = new MouseAdapter() {
 
@@ -973,10 +1386,10 @@ public class GamePanel extends JPanel {
         addMouseMotionListener(mouseHandler);
     }
 
-    private void handleClick(int x, int y) {
+    void handleClick(int x, int y) {
 
         // A little click sound whenever a menu button is pressed
-        if (currentState != GameState.UPGRADE) {
+        if (currentState != GameState.UPGRADE && currentState != GameState.PLAYING) {
             for (Rectangle button : buttonsForCurrentState()) {
                 if (button.contains(x, y)) {
                     sound.play(SoundManager.Sfx.CLICK);
@@ -990,8 +1403,14 @@ public class GamePanel extends JPanel {
             case MENU:
                 if (PLAY_BUTTON.contains(x, y)) {
                     currentState = GameState.MODE_SELECT;
+                } else if (HANGAR_BUTTON.contains(x, y)) {
+                    openHangarFromMenu();
                 } else if (SETTINGS_BUTTON.contains(x, y)) {
+                    resetConfirmTimer = 0;
                     currentState = GameState.SETTINGS;
+                } else if (HOWTO_BUTTON.contains(x, y)) {
+                    helpPage = 0;
+                    currentState = GameState.INSTRUCTIONS;
                 }
                 break;
 
@@ -1002,6 +1421,8 @@ public class GamePanel extends JPanel {
                     startGame(GameMode.ADVENTURE, Difficulty.MODERATE);
                 } else if (LEVEL_BUTTON.contains(x, y)) {
                     currentState = GameState.DIFFICULTY_SELECT;
+                } else if (SELECT_BACK_BUTTON.contains(x, y)) {
+                    currentState = GameState.MENU;
                 }
                 break;
 
@@ -1012,6 +1433,8 @@ public class GamePanel extends JPanel {
                     startGame(GameMode.LEVEL, Difficulty.MODERATE);
                 } else if (HARD_BUTTON.contains(x, y)) {
                     startGame(GameMode.LEVEL, Difficulty.HARD);
+                } else if (SELECT_BACK_BUTTON.contains(x, y)) {
+                    currentState = GameState.MODE_SELECT;
                 }
                 break;
 
@@ -1020,7 +1443,31 @@ public class GamePanel extends JPanel {
                     sound.setSoundOn(!sound.isSoundOn());
                 } else if (MUSIC_BUTTON.contains(x, y)) {
                     sound.setMusicOn(!sound.isMusicOn());
+                } else if (RESET_BUTTON.contains(x, y)) {
+
+                    // Two clicks in a row (within 3 seconds) erase the save data
+                    if (resetConfirmTimer > 0) {
+                        resetSaveData();
+                        resetConfirmTimer = 0;
+                        sound.play(SoundManager.Sfx.BIG_EXPLODE);
+                    } else {
+                        resetConfirmTimer = 180;
+                    }
+
                 } else if (BACK_BUTTON.contains(x, y)) {
+                    saveProgress();
+                    currentState = GameState.MENU;
+                }
+                break;
+
+            case INSTRUCTIONS:
+                for (int i = 0; i < HELP_TABS.length; i++) {
+                    if (HELP_TABS[i].contains(x, y)) {
+                        helpPage = i;
+                    }
+                }
+
+                if (HELP_BACK_BUTTON.contains(x, y)) {
                     currentState = GameState.MENU;
                 }
                 break;
@@ -1032,42 +1479,106 @@ public class GamePanel extends JPanel {
 
             case UPGRADE:
                 for (int i = 0; i < Upgrades.TRACKS; i++) {
-                    if (UPGRADE_CARDS[i].contains(x, y)) {
+                    if (BUY_BUTTONS[i].contains(x, y)) {
                         buyUpgrade(i);
+                    } else if (SELL_BUTTONS[i].contains(x, y)) {
+                        sellUpgrade(i);
                     }
                 }
 
-                if (LAUNCH_BUTTON.contains(x, y)) {
+                if (UNDO_BUTTON.contains(x, y)) {
+                    undoHangar();
+                } else if (REPAIR_BUTTON.contains(x, y) && !hangarFromMenu) {
+                    repairAllParts();
+                } else if (LAUNCH_BUTTON.contains(x, y)) {
                     sound.play(SoundManager.Sfx.CLICK);
                     finishUpgradeStation();
                 }
                 break;
 
+            case PLAYING:
+                for (int i = 0; i < QUICK_SLOTS.length; i++) {
+                    if (QUICK_SLOTS[i].contains(x, y)) {
+                        quickBuy(i);
+                    }
+                }
+                break;
+
+            case PAUSED:
+                if (MODAL_PRIMARY.contains(x, y)) {
+                    togglePause();
+                } else if (MODAL_SECONDARY.contains(x, y)) {
+                    returnToMenu();
+                }
+                break;
+
+            case MISSION_COMPLETE:
+                if (MODAL_PRIMARY.contains(x, y)) {
+                    continueAfterMission();
+                } else if (MODAL_SECONDARY.contains(x, y)) {
+                    returnToMenu();
+                }
+                break;
+
+            case GAME_OVER:
+                if (gameOverTimer >= 30 && MODAL_PRIMARY.contains(x, y)) {
+                    retry();
+                } else if (gameOverTimer >= 30 && MODAL_SECONDARY.contains(x, y)) {
+                    returnToMenu();
+                }
+                break;
+
+            case VICTORY:
+                if (VICTORY_BUTTON.contains(x, y)) {
+                    returnToMenu();
+                }
+                break;
+
             default:
                 break;
         }
     }
 
-    private Rectangle[] buttonsForCurrentState() {
+    Rectangle[] buttonsForCurrentState() {
 
         switch (currentState) {
             case MENU:
-                return new Rectangle[]{PLAY_BUTTON, SETTINGS_BUTTON};
+                return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON};
             case MODE_SELECT:
-                return new Rectangle[]{HARDCORE_BUTTON, ADVENTURE_BUTTON, LEVEL_BUTTON};
+                return new Rectangle[]{HARDCORE_BUTTON, ADVENTURE_BUTTON, LEVEL_BUTTON, SELECT_BACK_BUTTON};
             case DIFFICULTY_SELECT:
-                return new Rectangle[]{EASY_BUTTON, MODERATE_BUTTON, HARD_BUTTON};
+                return new Rectangle[]{EASY_BUTTON, MODERATE_BUTTON, HARD_BUTTON, SELECT_BACK_BUTTON};
             case SETTINGS:
-                return new Rectangle[]{SOUND_BUTTON, MUSIC_BUTTON, BACK_BUTTON};
-            case UPGRADE:
-                return new Rectangle[]{UPGRADE_CARDS[0], UPGRADE_CARDS[1], UPGRADE_CARDS[2],
-                                       UPGRADE_CARDS[3], LAUNCH_BUTTON};
+                return new Rectangle[]{SOUND_BUTTON, MUSIC_BUTTON, RESET_BUTTON, BACK_BUTTON};
+            case INSTRUCTIONS:
+                return new Rectangle[]{HELP_TABS[0], HELP_TABS[1], HELP_TABS[2], HELP_BACK_BUTTON};
+            case UPGRADE: {
+                ArrayList<Rectangle> list = new ArrayList<>();
+                for (int i = 0; i < Upgrades.TRACKS; i++) {
+                    list.add(BUY_BUTTONS[i]);
+                    list.add(SELL_BUTTONS[i]);
+                }
+                list.add(UNDO_BUTTON);
+                if (!hangarFromMenu) {
+                    list.add(REPAIR_BUTTON);
+                }
+                list.add(LAUNCH_BUTTON);
+                return list.toArray(new Rectangle[0]);
+            }
+            case PLAYING:
+                return QUICK_SLOTS;
+            case PAUSED:
+            case MISSION_COMPLETE:
+            case GAME_OVER:
+                return new Rectangle[]{MODAL_PRIMARY, MODAL_SECONDARY};
+            case VICTORY:
+                return new Rectangle[]{VICTORY_BUTTON};
             default:
                 return new Rectangle[0];
         }
     }
 
-    private void updateButtonHover(int x, int y) {
+    void updateButtonHover(int x, int y) {
 
         hoveredButton = null;
 
@@ -1083,7 +1594,7 @@ public class GamePanel extends JPanel {
     // 4. GAME LOOP
     // ===============================================================
 
-    private void updateExplosions() {
+    void updateExplosions() {
 
         for (int i = explosions.size() - 1; i >= 0; i--) {
 
@@ -1097,11 +1608,11 @@ public class GamePanel extends JPanel {
     }
 
     /** 0.0 - 1.0: how far through the current mission / run we are. */
-    private double progress() {
+    double progress() {
 
         if (selectedMode == GameMode.HARDCORE) {
             // Time based: used only to bring in tougher aliens as the run goes on
-            return Math.min(1.0, hardcoreTicks / 5400.0);
+            return Math.min(1.0, hardcoreTicks / 12000.0);
         }
 
         if (mission != null && mission.objective == Mission.Objective.SURVIVE) {
@@ -1115,28 +1626,50 @@ public class GamePanel extends JPanel {
         return Math.min(1.0, enemiesDefeated / (double) missionTarget);
     }
 
-    /** 1 = single shot, 2 = twin shot, 3 = triple spread, 4 = plasma 5-way. */
-    private int weaponLevel() {
+    /** 1 = single shot, 2 = twin shot, 3 = triple spread, 4 = 5-way spread. */
+    int weaponLevel() {
 
-        return upgrades.getWeaponLevel();
+        // Broken cannons can only manage a single shot
+        return parts.cannonsBroken() ? 1 : upgrades.getWeaponLevel();
     }
 
-    private void updateGame() {
+    /** True while nothing can hurt the player (just hit, boosting, or a boss is exploding). */
+    boolean invulnerable() {
+
+        return damageCooldown > 0 || player.isBoosting() || bossDeathTimer > 0;
+    }
+
+    void updateGame() {
 
         player.update();
 
         // ----- Count down timers -----
-        if (damageCooldown > 0) damageCooldown--;
-        if (shotCooldown > 0)   shotCooldown--;
-        if (rapidTimer > 0)     rapidTimer--;
-        if (shieldTimer > 0)    shieldTimer--;
-        if (bannerTimer > 0)    bannerTimer--;
-        if (warningTimer > 0)   warningTimer--;
-        if (radioTimer > 0)     radioTimer--;
-        if (pickupTimer > 0)    pickupTimer--;
-        if (shakeTimer > 0)     shakeTimer--;
+        if (damageCooldown > 0)     damageCooldown--;
+        if (shotCooldown > 0)       shotCooldown--;
+        if (rapidTimer > 0)         rapidTimer--;
+        if (shieldTimer > 0)        shieldTimer--;
+        if (bannerTimer > 0)        bannerTimer--;
+        if (warningTimer > 0)       warningTimer--;
+        if (radioTimer > 0)         radioTimer--;
+        if (pickupTimer > 0)        pickupTimer--;
+        if (shakeTimer > 0)         shakeTimer--;
         if (emptyClickTimer > 0)    emptyClickTimer--;
         if (bossHitSoundTimer > 0)  bossHitSoundTimer--;
+        if (quickBuyCooldown > 0)   quickBuyCooldown--;
+        if (dropCooldown > 0)       dropCooldown--;
+        if (boostCooldown > 0)      boostCooldown--;
+        if (moveWarningTimer > 0)   moveWarningTimer--;
+        if (systemAlertTimer > 0)   systemAlertTimer--;
+        if (hurtFlash > 0)          hurtFlash--;
+
+        for (int i = 0; i < quickFlash.length; i++) {
+            if (quickFlash[i] > 0) {
+                quickFlash[i]--;
+            }
+        }
+
+        updateFloatingTexts();
+        updateShipParts();
 
         player.setBlinking(damageCooldown > 0);
         player.setShielded(shieldTimer > 0);
@@ -1145,9 +1678,11 @@ public class GamePanel extends JPanel {
 
             hardcoreTicks++;
 
-            // Gradually increase enemy pressure as the run continues.
+            // Gradually increase enemy pressure as the run continues,
+            // and allow even more aliens after every boss.
             int difficultyStep = hardcoreTicks / 1800;
-            currentEnemySpawnInterval = Math.max(22, baseEnemySpawnInterval - difficultyStep * 7);
+            int fastest = Math.max(14, 22 - 2 * hardcoreBossesDefeated);
+            currentEnemySpawnInterval = Math.max(fastest, baseEnemySpawnInterval - difficultyStep * 7);
 
         } else if (mission != null) {
 
@@ -1174,7 +1709,7 @@ public class GamePanel extends JPanel {
         }
 
         // ----- Player shooting (the magazine is limited) -----
-        if (shooting && shotCooldown == 0) {
+        if (shooting && shotCooldown == 0 && bossDeathTimer == 0) {
 
             if (rapidTimer > 0 || (reloadTimer == 0 && ammo > 0)) {
 
@@ -1210,11 +1745,15 @@ public class GamePanel extends JPanel {
                 : currentEnemySpawnInterval;
         }
 
-        // ----- Enemies move and armed ones shoot -----
+        // ----- Enemies move, smart ones dodge, armed ones shoot -----
         for (int i = enemies.size() - 1; i >= 0; i--) {
 
             Enemy enemy = enemies.get(i);
-            enemy.update();
+            enemy.update(player.getCenterY());
+
+            if (enemy.isEvasive()) {
+                enemy.evade(bullets);
+            }
 
             if (enemy.shouldShoot()) {
                 enemyBullets.add(new BossBullet(
@@ -1227,25 +1766,35 @@ public class GamePanel extends JPanel {
             }
         }
 
-        // ----- Enemy bullets move -----
-        for (BossBullet shot : enemyBullets) {
-            shot.update();
-        }
-        enemyBullets.removeIf(BossBullet::isOffScreen);
+        // ----- Enemy shots move (homing missiles steer toward you) -----
+        for (int i = enemyBullets.size() - 1; i >= 0; i--) {
 
-        // ----- Player bullets against enemies -----
+            BossBullet shot = enemyBullets.get(i);
+            shot.update(player.getCenterX(), player.getCenterY());
+
+            if (shot.isExpired()) {
+                explosions.add(new Explosion(shot.getCenterX(), shot.getCenterY(), 0.5));
+                enemyBullets.remove(i);
+            } else if (shot.isOffScreen()) {
+                enemyBullets.remove(i);
+            }
+        }
+
+        // ----- Player bullets against aliens and missiles -----
         for (int i = bullets.size() - 1; i >= 0; i--) {
 
-            Rectangle bulletBounds = bullets.get(i).getBounds();
+            Bullet bullet = bullets.get(i);
+            Rectangle bulletBounds = bullet.getBounds();
+            boolean used = false;
 
-            for (int j = enemies.size() - 1; j >= 0; j--) {
+            for (int j = enemies.size() - 1; j >= 0 && !used; j--) {
 
                 Enemy enemy = enemies.get(j);
 
                 if (bulletBounds.intersects(enemy.getBounds())) {
 
-                    bullets.remove(i);
-                    enemy.takeDamage(1);
+                    used = true;
+                    enemy.takeDamage(bullet.getDamage());
 
                     if (enemy.isDead()) {
                         destroyEnemy(enemy, j);
@@ -1254,13 +1803,33 @@ public class GamePanel extends JPanel {
                             bulletBounds.x + bulletBounds.width, bulletBounds.y, 0.3
                         ));
                     }
-
-                    break;
                 }
+            }
+
+            for (int j = enemyBullets.size() - 1; j >= 0 && !used; j--) {
+
+                BossBullet shot = enemyBullets.get(j);
+
+                if (shot.isDestroyable() && bulletBounds.intersects(shot.getBounds())) {
+
+                    used = true;
+                    enemyBullets.remove(j);
+                    explosions.add(new Explosion(shot.getCenterX(), shot.getCenterY(), 0.7));
+                    sound.play(SoundManager.Sfx.EXPLODE);
+                    score += 5;
+                    earn(5, shot.getCenterX(), shot.getCenterY());
+                }
+            }
+
+            if (used) {
+                bullets.remove(i);
             }
         }
 
-        // ----- Boss -----
+        // ----- Asteroids and meteors -----
+        updateHazards();
+
+        // ----- Boss (and its guardians) -----
         updateBoss();
 
         // ----- Power-ups -----
@@ -1278,34 +1847,7 @@ public class GamePanel extends JPanel {
         }
 
         // ----- Things hitting the player -----
-        if (damageCooldown == 0 && bossDeathTimer == 0) {
-
-            Rectangle playerBounds = player.getBounds();
-
-            for (int i = enemies.size() - 1; i >= 0; i--) {
-
-                Enemy enemy = enemies.get(i);
-
-                if (playerBounds.intersects(enemy.getBounds())) {
-                    explosions.add(new Explosion(enemy.getCenterX(), enemy.getCenterY(), 1.0));
-                    enemies.remove(i);
-                    hitPlayer();
-                    break;
-                }
-            }
-
-            if (damageCooldown == 0) {
-
-                for (int i = enemyBullets.size() - 1; i >= 0; i--) {
-
-                    if (playerBounds.intersects(enemyBullets.get(i).getBounds())) {
-                        enemyBullets.remove(i);
-                        hitPlayer();
-                        break;
-                    }
-                }
-            }
-        }
+        checkPlayerHits();
 
         if (currentState != GameState.PLAYING) {
             return;
@@ -1315,40 +1857,115 @@ public class GamePanel extends JPanel {
         checkMissionProgress();
     }
 
-    private void fireWeapon() {
+    /** Aliens, shots, rocks, meteors, a ramming boss or a laser beam hitting your ship. */
+    void checkPlayerHits() {
+
+        if (invulnerable()) {
+            return;
+        }
+
+        Rectangle playerBounds = player.getBounds();
+
+        for (int i = enemies.size() - 1; i >= 0; i--) {
+
+            Enemy enemy = enemies.get(i);
+
+            if (playerBounds.intersects(enemy.getBounds())) {
+                explosions.add(new Explosion(enemy.getCenterX(), enemy.getCenterY(), 1.0));
+                enemies.remove(i);
+                hitPlayer();
+                return;
+            }
+        }
+
+        for (int i = enemyBullets.size() - 1; i >= 0; i--) {
+
+            if (playerBounds.intersects(enemyBullets.get(i).getBounds())) {
+
+                BossBullet shot = enemyBullets.remove(i);
+
+                if (shot.isMissile()) {
+                    explosions.add(new Explosion(shot.getCenterX(), shot.getCenterY(), 0.9));
+                }
+
+                hitPlayer();
+                return;
+            }
+        }
+
+        for (int i = hazards.size() - 1; i >= 0; i--) {
+
+            Hazard hazard = hazards.get(i);
+
+            if (hazard.isActive() && playerBounds.intersects(hazard.getBounds())) {
+
+                if (!hazard.isMeteor()) {
+                    destroyAsteroid(i, false);
+                }
+
+                hitPlayer();
+                return;
+            }
+        }
+
+        if (boss != null) {
+
+            Rectangle danger = boss.getDangerZone();
+
+            if (danger != null && playerBounds.intersects(danger)) {
+                hitPlayer();
+            }
+        }
+    }
+
+    // ---------- Weapons, reloading and boosting ----------
+
+    void fireWeapon() {
+
+        shotCooldown = shotDelay();
+
+        // Badly damaged cannons sometimes misfire
+        if (random.nextDouble() < parts.misfireChance()) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            explosions.add(new Explosion(player.getBulletX(), player.getBulletY(), 0.25));
+            return;
+        }
+
+        int level = weaponLevel();
+        int caliber = upgrades.getCaliberLevel();
+        int damage = upgrades.bulletDamageFor(level);
 
         int bx = player.getBulletX();
-        int by = player.getBulletY() - 2;
-        int level = weaponLevel();
+        int by = player.getBulletY() - (5 + caliber) / 2;
 
         switch (level) {
 
             case 1:
-                bullets.add(new Bullet(bx, by, 0, 1));
+                bullets.add(new Bullet(bx, by, 0, 1, damage, caliber));
                 break;
 
             case 2:
-                bullets.add(new Bullet(bx, by - 8, 0, 2));
-                bullets.add(new Bullet(bx, by + 8, 0, 2));
+                bullets.add(new Bullet(bx, by - 8, 0, 2, damage, caliber));
+                bullets.add(new Bullet(bx, by + 8, 0, 2, damage, caliber));
                 break;
 
             case 3:
-                bullets.add(new Bullet(bx, by, 0, 3));
-                bullets.add(new Bullet(bx, by - 6, -2, 3));
-                bullets.add(new Bullet(bx, by + 6, 2, 3));
+                bullets.add(new Bullet(bx, by, 0, 3, damage, caliber));
+                bullets.add(new Bullet(bx, by - 6, -2, 3, damage, caliber));
+                bullets.add(new Bullet(bx, by + 6, 2, 3, damage, caliber));
                 break;
 
             default:
-                bullets.add(new Bullet(bx, by, 0, 4));
-                bullets.add(new Bullet(bx, by - 5, -2, 4));
-                bullets.add(new Bullet(bx, by + 5, 2, 4));
-                bullets.add(new Bullet(bx, by - 9, -4, 4));
-                bullets.add(new Bullet(bx, by + 9, 4, 4));
+                bullets.add(new Bullet(bx, by, 0, 4, damage, caliber));
+                bullets.add(new Bullet(bx, by - 5, -2, 4, damage, caliber));
+                bullets.add(new Bullet(bx, by + 5, 2, 4, damage, caliber));
+                bullets.add(new Bullet(bx, by - 9, -4, 4, damage, caliber));
+                bullets.add(new Bullet(bx, by + 9, 4, 4, damage, caliber));
                 break;
         }
 
         sound.play(SoundManager.Sfx.SHOOT);
-        shotCooldown = (rapidTimer > 0) ? 6 : 12;
+        wearPart(ShipParts.CANNONS, ShipParts.WEAR_PER_VOLLEY);
 
         // Rapid fire = unlimited ammo. Otherwise every volley uses one round.
         if (rapidTimer == 0) {
@@ -1356,20 +1973,34 @@ public class GamePanel extends JPanel {
             ammo--;
 
             if (ammo <= 0) {
-                startReload(upgrades.getReloadTicks());
+                startReload(reloadTicks());
             }
         }
     }
 
-    private void startReload(int ticks) {
+    /** Ticks between volleys: faster with the AMMO MK II loader, slower with damaged cannons. */
+    int shotDelay() {
+
+        int delay = (rapidTimer > 0) ? 6 : upgrades.getShotDelay();
+        return (int) Math.round(delay * parts.fireDelayFactor());
+    }
+
+    /** A full reload. A damaged ammo feed makes it slower. */
+    int reloadTicks() {
+
+        return (int) Math.round(upgrades.getReloadTicks() * parts.reloadFactor());
+    }
+
+    void startReload(int ticks) {
 
         reloadTotal = Math.max(1, ticks);
         reloadTimer = reloadTotal;
         sound.play(SoundManager.Sfx.RELOAD_START);
+        wearPart(ShipParts.FEED, ShipParts.WEAR_PER_RELOAD);
     }
 
     /** Pressing R reloads early. It is quicker the fewer rounds are missing. */
-    private void startManualReload() {
+    void startManualReload() {
 
         int max = upgrades.getAmmoMax();
 
@@ -1377,43 +2008,138 @@ public class GamePanel extends JPanel {
             return;
         }
 
-        startReload(Math.max(30, upgrades.getReloadTicks() * (max - ammo) / max));
+        startReload(Math.max(30, reloadTicks() * (max - ammo) / max));
+    }
+
+    /** SHIFT: a quick dash that dodges anything (needs ENGINES MK II). */
+    void tryBoost() {
+
+        if (currentState != GameState.PLAYING) {
+            return;
+        }
+
+        if (upgrades.getBoostLevel() == 0) {
+            pickupText = "BUY ENGINES MK II IN THE HANGAR TO UNLOCK BOOST";
+            pickupTimer = 90;
+            return;
+        }
+
+        if (parts.enginesBroken()) {
+            systemAlert = "ENGINES BROKEN - BOOST OFFLINE";
+            systemAlertTimer = 120;
+            sound.play(SoundManager.Sfx.EMPTY);
+            return;
+        }
+
+        if (boostCooldown > 0 || player.isBoosting()) {
+            return;
+        }
+
+        player.boost();
+        boostCooldown = upgrades.getBoostCooldown();
+        sound.play(SoundManager.Sfx.BOOST);
+        wearPart(ShipParts.ENGINES, 1.5);
+    }
+
+    // ---------- Ship parts ----------
+
+    /** Damages a part, and warns the player if it just got worse. */
+    void wearPart(int part, double amount) {
+
+        if (parts.damage(part, amount)) {
+
+            ShipParts.State state = parts.state(part);
+            systemAlert = ShipParts.NAMES[part] + " " + state.name() + "  -  " + ShipParts.effectText(part, state).toUpperCase();
+            systemAlertTimer = 160;
+            sound.play(SoundManager.Sfx.ALERT);
+        }
+    }
+
+    /** Engine wear, nano-repair, and passing the damage on to the ship's speed and looks. */
+    void updateShipParts() {
+
+        if (player.isMoving()) {
+            wearPart(ShipParts.ENGINES, ShipParts.WEAR_PER_MOVE_TICK);
+        }
+
+        double nano = upgrades.getNanoRepair();
+
+        if (nano > 0) {
+            parts.repairAll(nano / TICKS_PER_SECOND);
+        }
+
+        player.setSpeed(upgrades.getSpeed() - parts.speedPenalty());
+        player.setPartDamage(parts.state(ShipParts.CANNONS).ordinal(),
+                             parts.state(ShipParts.FEED).ordinal(),
+                             parts.state(ShipParts.ENGINES).ordinal());
     }
 
     // ---------- Enemies ----------
 
-    private Enemy createEnemy() {
+    /** Aliens get faster the longer you survive. 1.0 = normal speed. */
+    double enemySpeedFactor() {
+
+        if (selectedMode == GameMode.HARDCORE) {
+            // Speeds up over time, and a little more after every boss
+            return 1.0 + Math.min(1.6, hardcoreTicks / 14400.0 + 0.06 * hardcoreBossesDefeated);
+        }
+
+        return baseSpeed * (1.0 + speedRamp * progress());
+    }
+
+    /** 1 - 8, shown in the HUD. Goes up as the aliens get faster. */
+    int threatLevel() {
+        return Math.max(1, Math.min(8, (int) ((enemySpeedFactor() - 0.85) * 6) + 1));
+    }
+
+    Enemy createEnemy() {
 
         double p = progress();
         int roll = random.nextInt(100);
+        Enemy.Type type = Enemy.Type.SCOUT;
 
-        if (p >= gunnerAt && roll < 22) {
-            return new Enemy(Enemy.Type.GUNNER);
+        // The newest (nastiest) types are checked first
+        if (p >= dasherAt && roll < 10) {
+            type = Enemy.Type.DASHER;
+        } else if (p >= looperAt && roll < 20) {
+            type = Enemy.Type.LOOPER;
+        } else if (p >= diverAt && roll < 32) {
+            type = Enemy.Type.DIVER;
+        } else if (p >= gunnerAt && roll < 46) {
+            type = Enemy.Type.GUNNER;
+        } else if (p >= zigzagAt && roll < 66) {
+            type = Enemy.Type.ZIGZAG;
         }
 
-        if (p >= zigzagAt && roll < 55) {
-            return new Enemy(Enemy.Type.ZIGZAG);
+        Enemy enemy = new Enemy(type, enemySpeedFactor());
+
+        // HARDCORE: after every boss, more aliens learn to predict your shots and dodge
+        if (selectedMode == GameMode.HARDCORE && hardcoreBossesDefeated > 0
+                && random.nextDouble() < Math.min(0.65, 0.22 * hardcoreBossesDefeated)) {
+            enemy.setEvasion(Math.min(1.0, 0.45 + 0.15 * hardcoreBossesDefeated));
         }
 
-        return new Enemy(Enemy.Type.SCOUT);
+        return enemy;
     }
 
-    private void destroyEnemy(Enemy enemy, int index) {
+    void destroyEnemy(Enemy enemy, int index) {
 
         enemies.remove(index);
         explosions.add(new Explosion(enemy.getCenterX(), enemy.getCenterY(), 1.0));
 
         score += enemy.getScore();
-        upgrades.addCredits(enemy.getScore());
+        earn(enemy.getScore(), enemy.getCenterX(), enemy.getCenterY());
         enemiesDefeated++;
+        aliensDestroyed++;
         sound.play(SoundManager.Sfx.EXPLODE);
 
         if (selectedMode == GameMode.HARDCORE && boss == null && bossDeathTimer == 0) {
             enemiesSinceBoss++;
         }
 
-        // Sometimes an alien drops a power-up
-        if (random.nextInt(100) < 11) {
+        // Sometimes an alien drops a power-up (never more than one every 5 seconds)
+        if (dropCooldown == 0 && random.nextInt(100) < 11) {
+            dropCooldown = 5 * TICKS_PER_SECOND;
             powerUps.add(new PowerUp(
                 enemy.getCenterX() - PowerUp.SIZE / 2.0,
                 enemy.getCenterY() - PowerUp.SIZE / 2.0,
@@ -1422,35 +2148,234 @@ public class GamePanel extends JPanel {
         }
     }
 
+    // ---------- Money ----------
+
+    /** Money for destroying something. It goes straight into your saved wallet. */
+    void earn(int amount, double x, double y) {
+
+        hangar.addCredits(amount);
+        creditsEarned += amount;
+
+        floatingTexts.add(new FloatingText("+" + amount, x, y - 8, UI.GOLD));
+        sound.play(SoundManager.Sfx.COIN);
+    }
+
+    void updateFloatingTexts() {
+
+        for (int i = floatingTexts.size() - 1; i >= 0; i--) {
+
+            FloatingText t = floatingTexts.get(i);
+            t.y -= 0.7;
+            t.life--;
+
+            if (t.life <= 0) {
+                floatingTexts.remove(i);
+            }
+        }
+    }
+
+    /**
+     * The quick shop at the bottom of the screen. Press 1-4 (or click) to buy:
+     * 1 rapid fire, 2 shield, 3 repair kit, 4 ammo refill.
+     */
+    /** The current price of a quick-shop item. */
+    int quickCost(int slot) {
+        return (int) Math.round(QUICK_COSTS[slot] * Math.pow(QUICK_PRICE_GROWTH[slot], quickBought[slot]));
+    }
+
+    void quickBuy(int slot) {
+
+        if (currentState != GameState.PLAYING || quickBuyCooldown > 0 || bossDeathTimer > 0) {
+            return;
+        }
+
+        quickBuyCooldown = 12;
+
+        int cost = quickCost(slot);
+        String problem = null;
+
+        if (slot == 1 && shieldTimer > 0) {
+            problem = "SHIELD IS ALREADY ACTIVE";
+        } else if (slot == 2 && lives >= MAX_LIVES && parts.isPerfect()) {
+            problem = "YOUR SHIP IS ALREADY IN PERFECT SHAPE";
+        } else if (slot == 3 && ammo >= upgrades.getAmmoMax() && reloadTimer == 0) {
+            problem = "MAGAZINE ALREADY FULL";
+        } else if (hangar.getCredits() < cost) {
+            problem = "NOT ENOUGH CREDITS - NEED " + cost;
+        }
+
+        if (problem != null) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            pickupText = problem;
+            pickupTimer = 70;
+            return;
+        }
+
+        hangar.addCredits(-cost);
+
+        switch (slot) {
+
+            case 0:
+                rapidTimer = Math.min(20 * TICKS_PER_SECOND, rapidTimer + 10 * TICKS_PER_SECOND);
+                pickupText = "RAPID FIRE ACTIVATED";
+                break;
+
+            case 1:
+                shieldTimer = 15 * TICKS_PER_SECOND;
+                pickupText = "SHIELD ONLINE";
+                break;
+
+            case 2:
+                if (lives < MAX_LIVES) {
+                    lives++;
+                }
+                parts.repairAll(40);
+                pickupText = "REPAIR KIT:  +1 LIFE,  PARTS +40%";
+                break;
+
+            default:
+                ammo = upgrades.getAmmoMax();
+                reloadTimer = 0;
+                pickupText = "AMMO REFILLED";
+                break;
+        }
+
+        pickupTimer = 80;
+        quickFlash[slot] = 24;
+        quickBought[slot]++;
+        floatingTexts.add(new FloatingText("-" + cost, player.getCenterX() + 20, player.getCenterY() - 24, UI.RED));
+        sound.play(SoundManager.Sfx.PICKUP);
+    }
+
+    // ---------- Asteroids and meteors ----------
+
+    int nextHazardInterval(int base) {
+
+        int interval = base;
+
+        // In HARDCORE the hazards come faster and faster
+        if (selectedMode == GameMode.HARDCORE) {
+            interval = Math.max(base / 2, base - hardcoreTicks / 25);
+        }
+
+        return (int) (interval * (0.8 + random.nextDouble() * 0.4));
+    }
+
+    void updateHazards() {
+
+        // Spawning (never while a boss is on screen)
+        boolean bossBusy = (boss != null) || bossDeathTimer > 0;
+
+        if (!bossBusy && progress() >= hazardsFrom) {
+
+            if (asteroidEvery > 0 && --asteroidTimer <= 0) {
+                hazards.add(Hazard.randomAsteroid(enemySpeedFactor()));
+                asteroidTimer = nextHazardInterval(asteroidEvery);
+            }
+
+            if (meteorEvery > 0 && --meteorTimer <= 0) {
+                spawnMeteorShower();
+                meteorTimer = nextHazardInterval(meteorEvery);
+            }
+        }
+
+        for (Hazard hazard : hazards) {
+            hazard.update();
+        }
+
+        // Your bullets against rocks (meteors cannot be destroyed)
+        for (int i = bullets.size() - 1; i >= 0; i--) {
+
+            Bullet bullet = bullets.get(i);
+            Rectangle bulletBounds = bullet.getBounds();
+
+            for (int j = hazards.size() - 1; j >= 0; j--) {
+
+                Hazard hazard = hazards.get(j);
+
+                if (!hazard.isMeteor() && bulletBounds.intersects(hazard.getBounds())) {
+
+                    bullets.remove(i);
+                    hazard.takeDamage(bullet.getDamage());
+
+                    if (hazard.isDead()) {
+                        destroyAsteroid(j, true);
+                    } else {
+                        explosions.add(new Explosion(
+                            bulletBounds.x + bulletBounds.width, bulletBounds.y, 0.3
+                        ));
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        hazards.removeIf(Hazard::isOffScreen);
+    }
+
+    /** One to three meteors, each warned about at the right edge of the screen first. */
+    void spawnMeteorShower() {
+
+        boolean intense = (selectedMode == GameMode.HARDCORE) || progress() > 0.5;
+        int count = 1 + random.nextInt(intense ? 3 : 2);
+
+        for (int i = 0; i < count; i++) {
+            double y = PLAY_TOP + 20 + random.nextDouble() * (PLAY_BOTTOM - PLAY_TOP - 40);
+            hazards.add(Hazard.meteor(y, 80 + i * 26));
+        }
+
+        sound.play(SoundManager.Sfx.ALERT);
+    }
+
+    void destroyAsteroid(int index, boolean rewarded) {
+
+        Hazard hazard = hazards.get(index);
+        hazards.remove(index);
+
+        explosions.add(new Explosion(hazard.getCenterX(), hazard.getCenterY(), 0.7 + hazard.getSize() * 0.5));
+        sound.play(SoundManager.Sfx.EXPLODE);
+
+        hazards.addAll(hazard.split());
+
+        if (rewarded) {
+            score += hazard.getCredits();
+            earn(hazard.getCredits(), hazard.getCenterX(), hazard.getCenterY());
+        }
+    }
+
     // ---------- Power-ups ----------
 
-    private PowerUp.Type randomPowerUpType() {
+    PowerUp.Type randomPowerUpType() {
 
         int roll = random.nextInt(100);
 
-        if (roll < 30 && lives < MAX_LIVES) {
+        if (roll < 30 && (lives < START_LIVES || !parts.isPerfect())) {
             return PowerUp.Type.REPAIR;
         }
 
         return (roll < 65) ? PowerUp.Type.RAPID_FIRE : PowerUp.Type.SHIELD;
     }
 
-    private void collectPowerUp(PowerUp powerUp) {
+    void collectPowerUp(PowerUp powerUp) {
 
         switch (powerUp.getType()) {
 
             case REPAIR:
-                if (lives < MAX_LIVES) {
+                // Gives a life back only when you are low; otherwise it fixes parts
+                parts.repairAll(20);
+                if (lives < START_LIVES) {
                     lives++;
-                    pickupText = "HULL REPAIRED  +1 LIFE";
+                    pickupText = "HULL REPAIRED  +1 LIFE,  PARTS +20%";
                 } else {
+                    parts.repairAll(15);
                     score += 100;
-                    pickupText = "HULL ALREADY FULL  +100";
+                    pickupText = "PARTS REPAIRED +35%  +100";
                 }
                 break;
 
             case RAPID_FIRE:
-                rapidTimer = 8 * TICKS_PER_SECOND;
+                rapidTimer = Math.max(rapidTimer, 8 * TICKS_PER_SECOND);
                 pickupText = "RAPID FIRE!";
                 break;
 
@@ -1467,7 +2392,7 @@ public class GamePanel extends JPanel {
 
     // ---------- Player damage ----------
 
-    private void hitPlayer() {
+    void hitPlayer() {
 
         // A shield soaks up one hit
         if (shieldTimer > 0) {
@@ -1481,16 +2406,20 @@ public class GamePanel extends JPanel {
         lives--;
         damageCooldown = 75;
         shakeTimer = 14;
+        hurtFlash = 22;
         sound.play(SoundManager.Sfx.HIT);
 
         explosions.add(new Explosion(player.getCenterX(), player.getCenterY(), 0.8));
+
+        // Every hit also damages one part of the ship
+        wearPart(parts.randomPart(), parts.randomHitDamage());
 
         if (lives <= 0) {
             gameOver();
         }
     }
 
-    private void gameOver() {
+    void gameOver() {
 
         lives = 0;
         shooting = false;
@@ -1509,7 +2438,7 @@ public class GamePanel extends JPanel {
     // ---------- Bosses ----------
 
     /** Which boss (if any) should arrive right now? */
-    private Mission.BossSpec nextBossSpec() {
+    Mission.BossSpec nextBossSpec() {
 
         // HARDCORE: a boss every few kills, tougher and different each time
         if (selectedMode == GameMode.HARDCORE) {
@@ -1526,8 +2455,8 @@ public class GamePanel extends JPanel {
                 name += " MK-" + (n / Boss.DESIGN_COUNT + 1);
             }
 
-            // Every new boss has 35 more health than the last one
-            return new Mission.BossSpec(0, 40 + 35 * n, name, design, null);
+            // Every new boss is tougher than the last, and the gap keeps growing
+            return new Mission.BossSpec(0, 300 + 180 * n + 30 * n * n, name, design, null);
         }
 
         // ADVENTURE and LEVEL: the mission lists its bosses and when they appear
@@ -1543,7 +2472,7 @@ public class GamePanel extends JPanel {
         return null;
     }
 
-    private void updateBoss() {
+    void updateBoss() {
 
         if (boss == null && bossDeathTimer == 0) {
 
@@ -1558,28 +2487,53 @@ public class GamePanel extends JPanel {
             return;
         }
 
-        boss.update(SCREEN_HEIGHT);
+        boss.update(PLAY_BOTTOM, player.getCenterY());
 
-        if (bossDeathTimer > 0 || boss.isEntering()) {
+        if (bossDeathTimer > 0) {
             return;
         }
+
+        // Special-move warnings, and aliens launched by the boss
+        if (boss.consumeMoveStarted()) {
+
+            String warning = boss.getMoveWarning();
+
+            if (warning != null) {
+                moveWarning = warning;
+                moveWarningTimer = 110;
+            }
+        }
+
+        enemies.addAll(boss.takeSpawns());
+
+        if (boss.isEntering()) {
+            return;
+        }
+
+        updateGuardians();
 
         // Boss attacks
         for (BossBullet shot : boss.attack(player.getBounds().x, player.getCenterY())) {
             enemyBullets.add(shot);
         }
 
-        // Player bullets damage the boss
+        // Player bullets: guardians block them first, then they hit the boss
         Rectangle bossBounds = boss.getBounds();
 
         for (int i = bullets.size() - 1; i >= 0; i--) {
 
-            Rectangle bulletBounds = bullets.get(i).getBounds();
+            Bullet bullet = bullets.get(i);
+            Rectangle bulletBounds = bullet.getBounds();
 
-            if (bulletBounds.intersects(bossBounds)) {
+            if (hitGuardian(bullet)) {
+                bullets.remove(i);
+                continue;
+            }
+
+            if (!boss.isInvulnerable() && bulletBounds.intersects(bossBounds)) {
 
                 bullets.remove(i);
-                boss.takeDamage(1);
+                boss.takeDamage(bullet.getDamage());
 
                 if (bossHitSoundTimer == 0) {
                     sound.play(SoundManager.Sfx.BOSS_HIT);
@@ -1601,13 +2555,13 @@ public class GamePanel extends JPanel {
 
             PowerUp.Type type;
 
-            if (lives <= 3) {
+            if (lives <= 3 || !parts.isPerfect()) {
                 type = PowerUp.Type.REPAIR;
             } else {
                 type = random.nextBoolean() ? PowerUp.Type.SHIELD : PowerUp.Type.RAPID_FIRE;
             }
 
-            powerUps.add(new PowerUp(boss.getX() - 20, boss.getY() + boss.getHeight() / 2 - 14, type));
+            powerUps.add(new PowerUp(boss.getHomeX() - 40, boss.getY() + boss.getHeight() / 2 - 14, type));
             bossSupplyTimer = 9 * TICKS_PER_SECOND;
         }
 
@@ -1616,7 +2570,111 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void spawnBoss(Mission.BossSpec spec) {
+    // ---------- Guardians (HARDCORE, from the second boss on) ----------
+
+    void updateGuardians() {
+
+        if (guardianCount == 0) {
+            return;
+        }
+
+        // The first time, the boss deploys all of its guardians at once
+        if (!guardiansDeployed) {
+
+            for (int slot = 0; slot < guardianCount; slot++) {
+                spawnGuardian(slot);
+            }
+
+            guardiansDeployed = true;
+            sound.play(SoundManager.Sfx.CHARGE);
+        }
+
+        // Guardians aim for where your ship will be in about 20 ticks
+        double predictedY = player.getCenterY() + player.getVelocityY() * 20;
+
+        for (Guardian guard : guardians) {
+            guard.update(boss.getHomeX(), predictedY);
+        }
+
+        // The boss sends a replacement a while after one is destroyed
+        if (guardians.size() < guardianCount) {
+
+            guardianRespawn--;
+
+            if (guardianRespawn <= 0) {
+                spawnGuardian(freeGuardianSlot());
+                guardianRespawn = 7 * TICKS_PER_SECOND;
+            }
+        }
+    }
+
+    void spawnGuardian(int slot) {
+
+        int n = Math.max(1, hardcoreBossesDefeated);
+
+        guardians.add(new Guardian(slot,
+            boss.getX() + 10, boss.getY() + boss.getHeight() / 2.0 - Guardian.SIZE / 2.0,
+            30 + 6 * (n - 1), 2.8 + 0.35 * Math.min(n, 5)));
+    }
+
+    int freeGuardianSlot() {
+
+        for (int slot = 0; slot < 4; slot++) {
+
+            boolean taken = false;
+
+            for (Guardian guard : guardians) {
+                if (guard.getSlot() == slot) {
+                    taken = true;
+                }
+            }
+
+            if (!taken) {
+                return slot;
+            }
+        }
+
+        return 0;
+    }
+
+    /** Returns true if the bullet hit a guardian (the bullet is used up). */
+    boolean hitGuardian(Bullet bullet) {
+
+        Rectangle bulletBounds = bullet.getBounds();
+
+        for (int g = guardians.size() - 1; g >= 0; g--) {
+
+            Guardian guard = guardians.get(g);
+
+            if (!bulletBounds.intersects(guard.getBounds())) {
+                continue;
+            }
+
+            guard.takeDamage(bullet.getDamage());
+
+            if (guard.isDead()) {
+
+                guardians.remove(g);
+                explosions.add(new Explosion(guard.getCenterX(), guard.getCenterY(), 1.2));
+                sound.play(SoundManager.Sfx.EXPLODE);
+                score += 15;
+                earn(15, guard.getCenterX(), guard.getCenterY());
+
+                if (guardianRespawn <= 0) {
+                    guardianRespawn = 7 * TICKS_PER_SECOND;
+                }
+
+            } else {
+                explosions.add(new Explosion(bulletBounds.x + bulletBounds.width, bulletBounds.y, 0.3));
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    void spawnBoss(Mission.BossSpec spec) {
 
         int tier = (selectedMode == GameMode.HARDCORE) ? hardcoreBossesDefeated : nextBossIndex;
 
@@ -1627,6 +2685,12 @@ public class GamePanel extends JPanel {
         warningTimer = 150;
         shakeTimer = 20;
         spawnCooldown = 120;
+
+        // HARDCORE: from the second boss on, guardian drones protect the boss
+        guardianCount = (selectedMode == GameMode.HARDCORE) ? Math.min(4, hardcoreBossesDefeated) : 0;
+        guardians.clear();
+        guardianRespawn = 0;
+        guardiansDeployed = false;
 
         sound.play(SoundManager.Sfx.WARNING);
 
@@ -1641,19 +2705,26 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void startBossDeath() {
+    void startBossDeath() {
 
         bossDeathTimer = 110;
         shooting = false;
         enemyBullets.clear();
+        boss.cancelMove();
 
         for (Enemy enemy : enemies) {
             explosions.add(new Explosion(enemy.getCenterX(), enemy.getCenterY(), 1.0));
         }
         enemies.clear();
+
+        for (Guardian guard : guardians) {
+            explosions.add(new Explosion(guard.getCenterX(), guard.getCenterY(), 1.2));
+        }
+        guardians.clear();
+        guardianCount = 0;
     }
 
-    private void updateBossDeath() {
+    void updateBossDeath() {
 
         bossDeathTimer--;
         shakeTimer = Math.max(shakeTimer, 3);
@@ -1683,7 +2754,7 @@ public class GamePanel extends JPanel {
         explosions.add(new Explosion(b.x + b.width / 2, b.y + b.height / 2, 5.0));
         sound.play(SoundManager.Sfx.BIG_EXPLODE);
 
-        upgrades.addCredits(bossReward);
+        earn(bossReward, b.x + b.width / 2.0, b.y + b.height / 2.0);
         String defeatedName = boss.getName();
         boss = null;
 
@@ -1703,7 +2774,7 @@ public class GamePanel extends JPanel {
                 background.setScene(SpaceBackground.Scene.DEFAULT);
                 damageCooldown = 90;
                 currentState = GameState.PLAYING;
-            });
+            }, false);
 
         } else if (mission != null) {
 
@@ -1723,14 +2794,14 @@ public class GamePanel extends JPanel {
 
     // ---------- Radio messages and mission progress ----------
 
-    private void showRadio(String speaker, String text) {
+    void showRadio(String speaker, String text) {
 
         radioSpeaker = speaker;
         radioText = text;
         radioTimer = 5 * TICKS_PER_SECOND;
     }
 
-    private void updateRadio() {
+    void updateRadio() {
 
         if (mission == null || nextRadio >= mission.radioLines.size() || radioTimer > 0) {
             return;
@@ -1744,7 +2815,7 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void checkMissionProgress() {
+    void checkMissionProgress() {
 
         if (currentState != GameState.PLAYING || selectedMode == GameMode.HARDCORE
                 || mission == null) {
@@ -1773,7 +2844,7 @@ public class GamePanel extends JPanel {
         }
     }
 
-    private void completeMission(String summary) {
+    void completeMission(String summary) {
 
         missionSummary = summary;
         shooting = false;
@@ -1789,7 +2860,7 @@ public class GamePanel extends JPanel {
     }
 
     // ===============================================================
-    // 5. DRAWING
+    // 5. DRAWING  (everything you can see is drawn by Screens.java)
     // ===============================================================
 
     @Override
@@ -1809,1287 +2880,13 @@ public class GamePanel extends JPanel {
             RenderingHints.VALUE_TEXT_ANTIALIAS_ON
         );
 
-        drawBackground(g2);
-
-        switch (currentState) {
-
-            case MENU:
-                drawMainMenu(g2);
-                break;
-
-            case MODE_SELECT:
-                drawModeSelection(g2);
-                break;
-
-            case DIFFICULTY_SELECT:
-                drawDifficultySelection(g2);
-                break;
-
-            case SETTINGS:
-                drawSettings(g2);
-                break;
-
-            case INSTRUCTIONS:
-                drawInstructions(g2);
-                break;
-
-            case STORY:
-                drawStory(g2);
-                break;
-
-            case UPGRADE:
-                drawUpgradeStation(g2);
-                break;
-
-            case PLAYING:
-                drawGameplay(g2);
-                break;
-
-            case PAUSED:
-                drawGameplay(g2);
-                drawPaused(g2);
-                break;
-
-            case GAME_OVER:
-                drawGameplay(g2);
-                drawGameOver(g2);
-                break;
-
-            case MISSION_COMPLETE:
-                drawGameplay(g2);
-                drawMissionComplete(g2);
-                break;
-
-            case VICTORY:
-                drawVictory(g2);
-                break;
-
-        }
+        screens.paint(g2);
 
         g2.dispose();
 
         // Keeps animation smooth on Linux
         Toolkit.getDefaultToolkit().sync();
 
-    }
-
-    // ---------- Background ----------
-
-    private void drawBackground(Graphics2D g2) {
-
-        boolean menuScreen = currentState == GameState.MENU
-            || currentState == GameState.MODE_SELECT
-            || currentState == GameState.DIFFICULTY_SELECT
-            || currentState == GameState.SETTINGS;
-
-        if (menuScreen && menuBackground != null) {
-
-            Graphics2D bg = (Graphics2D) g2.create();
-
-            double scale = Math.max(
-                (double) SCREEN_WIDTH / menuBackground.getWidth(),
-                (double) SCREEN_HEIGHT / menuBackground.getHeight()
-            );
-
-            int drawWidth = (int) (menuBackground.getWidth() * scale);
-            int drawHeight = (int) (menuBackground.getHeight() * scale);
-            int drawX = (SCREEN_WIDTH - drawWidth) / 2;
-            int drawY = (SCREEN_HEIGHT - drawHeight) / 2;
-
-            bg.drawImage(menuBackground, drawX, drawY, drawWidth, drawHeight, null);
-
-            // A subtle dark overlay keeps the title and menu buttons readable.
-            bg.setColor(new Color(0, 0, 0, 35));
-            bg.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-            bg.dispose();
-
-        } else {
-
-            double p = (currentState == GameState.VICTORY) ? 0.0 : progress();
-            background.draw(g2, p);
-
-        }
-
-    }
-
-    // ---------- Menus ----------
-
-    /** "STARFALL" becomes "S T A R F A L L" (3 spaces between words). */
-    private static String spaced(String text) {
-
-        StringBuilder result = new StringBuilder();
-
-        for (int i = 0; i < text.length(); i++) {
-
-            char c = text.charAt(i);
-
-            if (c == ' ') {
-                result.append("  ");
-            } else {
-                result.append(c);
-
-                if (i < text.length() - 1) {
-                    result.append(' ');
-                }
-            }
-        }
-
-        return result.toString();
-    }
-
-    /** Shrinks a font until the text fits, so long game names never overflow. */
-    private Font fitFont(Graphics2D g2, String text, String name,
-                         int style, int size, int maxWidth) {
-
-        Font font = new Font(name, style, size);
-
-        while (size > 12 && g2.getFontMetrics(font).stringWidth(text) > maxWidth) {
-            size -= 2;
-            font = new Font(name, style, size);
-        }
-
-        return font;
-    }
-
-    private void drawTitleAndSubtitle(Graphics2D g2) {
-
-        String title = spaced(Story.TITLE);
-        g2.setFont(fitFont(g2, title, "Monospaced", Font.BOLD, 43, 720));
-
-        int titleWidth = g2.getFontMetrics().stringWidth(title);
-        int titleX = (SCREEN_WIDTH - titleWidth) / 2;
-
-        // Gold glow behind the title
-        g2.setColor(new Color(255, 190, 55, 55));
-        g2.drawString(title, titleX - 3, 128);
-        g2.drawString(title, titleX + 3, 128);
-        g2.drawString(title, titleX, 125);
-
-        g2.setColor(new Color(255, 224, 125));
-        g2.drawString(title, titleX, 125);
-
-        String subtitle = spaced(Story.SUBTITLE);
-        g2.setFont(fitFont(g2, subtitle, "SansSerif", Font.BOLD, 15, 720));
-        g2.setColor(new Color(235, 240, 248));
-        drawCenteredString(g2, subtitle, 163);
-    }
-
-    private void drawMainMenu(Graphics2D g2) {
-
-        drawTitleAndSubtitle(g2);
-
-        drawMenuButton(g2, PLAY_BUTTON, "PLAY GAME",
-                       new Color(35, 170, 255), hoveredButton == PLAY_BUTTON);
-        drawMenuButton(g2, SETTINGS_BUTTON, "SETTINGS",
-                       new Color(255, 125, 55), hoveredButton == SETTINGS_BUTTON);
-
-        g2.setFont(new Font("SansSerif", Font.BOLD, 13));
-        g2.setColor(new Color(225, 232, 245));
-        drawShadowed(g2, "PRESS  I  FOR  HOW  TO  PLAY", 500);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g2.setColor(new Color(255, 224, 125));
-        drawShadowed(g2, "BEST SCORE   -   ADVENTURE: " + bestFor("adventure")
-                         + "      HARDCORE: " + bestFor("hardcore"), 540);
-    }
-
-    private void drawModeSelection(Graphics2D g2) {
-
-        drawTitleAndSubtitle(g2);
-
-        drawMenuButton(g2, HARDCORE_BUTTON, "HARDCORE",
-                       new Color(35, 170, 255), hoveredButton == HARDCORE_BUTTON);
-        drawMenuButton(g2, ADVENTURE_BUTTON, "ADVENTURE",
-                       new Color(255, 125, 55), hoveredButton == ADVENTURE_BUTTON);
-        drawMenuButton(g2, LEVEL_BUTTON, "LEVEL",
-                       new Color(35, 170, 255), hoveredButton == LEVEL_BUTTON);
-
-        String caption;
-
-        if (hoveredButton == HARDCORE_BUTTON) {
-            caption = "Endless waves, tougher bosses and upgrades. How long can you last?";
-        } else if (hoveredButton == ADVENTURE_BUTTON) {
-            caption = "The full story: four missions, bosses and ship upgrades. Find her.";
-        } else if (hoveredButton == LEVEL_BUTTON) {
-            caption = "A quick single sector. Choose your difficulty.";
-        } else {
-            caption = "ENTER = story mode          ESC = back";
-        }
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        g2.setColor(new Color(235, 240, 250));
-        drawShadowed(g2, caption, 500);
-    }
-
-    private void drawDifficultySelection(Graphics2D g2) {
-
-        drawTitleAndSubtitle(g2);
-
-        drawMenuButton(g2, EASY_BUTTON, "EASY",
-                       new Color(35, 170, 255), hoveredButton == EASY_BUTTON);
-        drawMenuButton(g2, MODERATE_BUTTON, "MODERATE",
-                       new Color(255, 125, 55), hoveredButton == MODERATE_BUTTON);
-        drawMenuButton(g2, HARD_BUTTON, "HARD",
-                       new Color(35, 170, 255), hoveredButton == HARD_BUTTON);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        g2.setColor(new Color(235, 240, 250));
-        String caption = "ENTER = moderate          ESC = back";
-
-        if (hoveredButton == EASY_BUTTON) {
-            caption = levelCaption(0);
-        } else if (hoveredButton == MODERATE_BUTTON) {
-            caption = levelCaption(1);
-        } else if (hoveredButton == HARD_BUTTON) {
-            caption = levelCaption(2);
-        }
-
-        drawShadowed(g2, caption, 500);
-    }
-
-    /** "22 aliens, no boss, armed aliens" - built from the Mission data. */
-    private String levelCaption(int index) {
-
-        Mission m = Mission.LEVELS[index];
-        int bosses = m.bosses.size();
-
-        String text = m.target + " aliens, "
-            + (bosses == 0 ? "no boss" : bosses + " boss fight" + (bosses > 1 ? "s" : ""));
-
-        if (m.gunnerAt < 1.0) {
-            text += ", armed aliens";
-        }
-
-        return text;
-    }
-
-    private void drawMenuButton(Graphics2D g2, Rectangle bounds,
-                                String label, Color accent, boolean hovered) {
-
-        if (hovered) {
-            g2.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 65));
-        } else {
-            g2.setColor(new Color(4, 12, 28, 165));
-        }
-        g2.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
-
-        g2.setStroke(new BasicStroke(2.0f));
-        g2.setColor(accent);
-        g2.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
-
-        g2.setFont(new Font("SansSerif", Font.BOLD, 16));
-        g2.setColor(hovered ? Color.WHITE : new Color(245, 247, 255));
-        FontMetrics metrics = g2.getFontMetrics();
-        int textX = bounds.x + (bounds.width - metrics.stringWidth(label)) / 2;
-        int textY = bounds.y + (bounds.height - metrics.getHeight()) / 2 + metrics.getAscent();
-        g2.drawString(label, textX, textY);
-
-    }
-
-    // SETTINGS SCREEN
-
-    private void drawSettings(Graphics2D g2) {
-
-        g2.setColor(new Color(3, 8, 20, 175));
-        g2.fillRoundRect(150, 90, 500, 435, 18, 18);
-
-        g2.setColor(new Color(255, 218, 120));
-        g2.setFont(new Font("Monospaced", Font.BOLD, 34));
-        drawCenteredString(g2, "SETTINGS", 142);
-
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("SansSerif", Font.BOLD, 19));
-        drawCenteredString(g2, "CONTROLS", 188);
-
-        drawKeyRow(g2, "WASD / ARROWS", "MOVE",         224);
-        drawKeyRow(g2, "SPACEBAR",      "SHOOT (HOLD)", 252);
-        drawKeyRow(g2, "R",             "RELOAD",       280);
-        drawKeyRow(g2, "P / ESC",       "PAUSE",        308);
-        drawKeyRow(g2, "V",             "MUTE / UNMUTE", 336);
-
-        if (!sound.isAvailable()) {
-            g2.setFont(new Font("SansSerif", Font.PLAIN, 12));
-            g2.setColor(new Color(255, 150, 120));
-            drawCenteredString(g2, "(No sound device found - the game will stay silent)", 362);
-        }
-
-        boolean soundOn = sound.isSoundOn();
-        boolean musicOn = sound.isMusicOn();
-
-        drawMenuButton(g2, SOUND_BUTTON, "SOUND EFFECTS: " + (soundOn ? "ON" : "OFF"),
-                       soundOn ? new Color(60, 200, 110) : new Color(220, 80, 80),
-                       hoveredButton == SOUND_BUTTON);
-        drawMenuButton(g2, MUSIC_BUTTON, "MUSIC: " + (musicOn ? "ON" : "OFF"),
-                       musicOn ? new Color(60, 200, 110) : new Color(220, 80, 80),
-                       hoveredButton == MUSIC_BUTTON);
-
-        drawMenuButton(g2, BACK_BUTTON, "BACK TO MENU",
-                       new Color(35, 170, 255), hoveredButton == BACK_BUTTON);
-
-    }
-
-    /** Draws "KEY    ACTION" with the two columns lined up around x = 400. */
-    private void drawKeyRow(Graphics2D g2, String key, String action, int y) {
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 17));
-        g2.setColor(new Color(255, 224, 125));
-        int keyWidth = g2.getFontMetrics().stringWidth(key);
-        g2.drawString(key, 385 - keyWidth, y);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 17));
-        g2.setColor(Color.WHITE);
-        g2.drawString(action, 415, y);
-    }
-
-    // INSTRUCTIONS
-
-    private void drawInstructions(Graphics2D g2) {
-
-        g2.setColor(new Color(3, 8, 20, 200));
-        g2.fillRoundRect(50, 40, 700, 520, 20, 20);
-
-        g2.setColor(Color.CYAN);
-        g2.setFont(new Font("Monospaced", Font.BOLD, 34));
-        drawCenteredString(g2, "HOW TO PLAY", 92);
-
-        // Controls
-        g2.setFont(new Font("SansSerif", Font.BOLD, 18));
-        g2.setColor(Color.WHITE);
-        g2.drawString("CONTROLS", 90, 140);
-
-        drawInstructionRow(g2, "WASD/ARROWS", "Move",               90, 170);
-        drawInstructionRow(g2, "SPACE",       "Shoot (hold it)",    90, 195);
-        drawInstructionRow(g2, "R",           "Reload early",       90, 220);
-        drawInstructionRow(g2, "P / ESC",     "Pause",              90, 245);
-        drawInstructionRow(g2, "ENTER",       "Confirm / continue", 90, 270);
-        drawInstructionRow(g2, "V",           "Mute / unmute",      90, 295);
-
-        // Power-ups
-        g2.setFont(new Font("SansSerif", Font.BOLD, 18));
-        g2.setColor(Color.WHITE);
-        g2.drawString("POWER-UPS", 430, 140);
-
-        PowerUp.drawIcon(g2, PowerUp.Type.REPAIR, 432, 156, 26, frame);
-        PowerUp.drawIcon(g2, PowerUp.Type.RAPID_FIRE, 432, 194, 26, frame);
-        PowerUp.drawIcon(g2, PowerUp.Type.SHIELD, 432, 232, 26, frame);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        g2.setColor(new Color(225, 232, 245));
-        g2.drawString("Repair: +1 life", 478, 175);
-        g2.drawString("Rapid fire: unlimited ammo", 478, 213);
-        g2.drawString("Shield: blocks one hit", 478, 251);
-
-        // Aliens
-        g2.setFont(new Font("SansSerif", Font.BOLD, 18));
-        g2.setColor(Color.WHITE);
-        g2.drawString("ALIENS", 90, 345);
-
-        drawAlienKey(g2, new Color(150, 0, 180), "Purple: flies straight",        90, 377);
-        drawAlienKey(g2, new Color(0, 160, 160), "Teal: weaves up and down",      90, 407);
-        drawAlienKey(g2, new Color(200, 80, 25), "Orange: armed, takes 2 hits",   90, 437);
-
-        // Ammo and upgrades
-        g2.setFont(new Font("SansSerif", Font.BOLD, 18));
-        g2.setColor(Color.WHITE);
-        g2.drawString("AMMO", 430, 300);
-        g2.drawString("UPGRADES", 430, 385);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        g2.setColor(new Color(225, 232, 245));
-        g2.drawString("Your magazine is limited. Reload with R,", 430, 325);
-        g2.drawString("or it reloads by itself when empty.", 430, 347);
-        g2.drawString("Aliens and bosses give credits to spend", 430, 410);
-        g2.drawString("on ship upgrades between fights.", 430, 432);
-
-        g2.setColor(Color.YELLOW);
-        g2.setFont(new Font("Arial", Font.BOLD, 18));
-        drawCenteredString(g2, "PRESS ENTER OR ESC TO RETURN", 525);
-
-    }
-
-    private void drawInstructionRow(Graphics2D g2, String key, String action, int x, int y) {
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 16));
-        g2.setColor(new Color(255, 224, 125));
-        g2.drawString(key, x, y);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        g2.setColor(new Color(225, 232, 245));
-        g2.drawString(action, x + 150, y);
-    }
-
-    private void drawAlienKey(Graphics2D g2, Color color, String text, int x, int y) {
-
-        g2.setColor(color);
-        g2.fillOval(x, y - 14, 20, 16);
-        g2.setColor(Color.WHITE);
-        g2.fillOval(x + 4, y - 10, 4, 4);
-        g2.fillOval(x + 12, y - 10, 4, 4);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        g2.setColor(new Color(225, 232, 245));
-        g2.drawString(text, x + 32, y);
-    }
-
-    // ---------- Story scenes ----------
-
-    private void drawStory(Graphics2D g2) {
-
-        Story.Page page = storyPages[storyPageIndex];
-
-        g2.setColor(new Color(0, 0, 0, 110));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        drawStoryArt(g2, page.art);
-
-        // Caption
-        String caption = spaced(page.caption);
-        g2.setFont(fitFont(g2, caption, "Monospaced", Font.BOLD, 20, 720));
-        g2.setColor(new Color(255, 224, 125));
-        drawCenteredString(g2, caption, 62);
-
-        // Text box
-        g2.setColor(new Color(3, 8, 20, 210));
-        g2.fillRoundRect(55, 372, 690, 168, 18, 18);
-
-        g2.setStroke(new BasicStroke(1.5f));
-        g2.setColor(new Color(90, 130, 200, 170));
-        g2.drawRoundRect(55, 372, 690, 168, 18, 18);
-
-        // The text types itself out, one letter at a time
-        g2.setFont(new Font("Serif", Font.ITALIC, 22));
-        List<String> lines = wrapText(page.text, g2.getFontMetrics(), 630);
-
-        int remaining = (int) storyChars;
-        int textY = 412;
-
-        g2.setColor(Color.WHITE);
-
-        for (String line : lines) {
-
-            if (remaining <= 0) {
-                break;
-            }
-
-            int count = Math.min(line.length(), remaining);
-            g2.drawString(line.substring(0, count), 85, textY);
-
-            remaining -= count;
-            textY += 30;
-        }
-
-        // Prompts
-        boolean pageDone = storyChars >= page.text.length();
-
-        if (pageDone && (frame / 30) % 2 == 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 14));
-            g2.setColor(new Color(255, 224, 125));
-            drawCenteredString(g2, "PRESS ENTER TO CONTINUE", 568);
-        }
-
-        g2.setFont(new Font("Arial", Font.PLAIN, 12));
-        g2.setColor(new Color(150, 165, 190));
-        g2.drawString("ESC - SKIP", SCREEN_WIDTH - 90, 588);
-        g2.drawString((storyPageIndex + 1) + " / " + storyPages.length, 25, 588);
-    }
-
-    /** Splits text into lines that fit inside maxWidth pixels. */
-    private List<String> wrapText(String text, FontMetrics metrics, int maxWidth) {
-
-        List<String> lines = new ArrayList<>();
-        StringBuilder line = new StringBuilder();
-
-        for (String word : text.split(" ")) {
-
-            String attempt = (line.length() == 0) ? word : line + " " + word;
-
-            if (metrics.stringWidth(attempt) > maxWidth && line.length() > 0) {
-                lines.add(line.toString());
-                line = new StringBuilder(word);
-            } else {
-                line = new StringBuilder(attempt);
-            }
-        }
-
-        if (line.length() > 0) {
-            lines.add(line.toString());
-        }
-
-        return lines;
-    }
-
-    /** The picture shown above the story text. */
-    private void drawStoryArt(Graphics2D g2, Story.Art art) {
-
-        switch (art) {
-
-            case LIGHT: {
-
-                double flicker = 0.85 + 0.15 * Math.sin(frame * 0.2);
-
-                g2.setPaint(new GradientPaint(
-                    0, 70, new Color(255, 255, 230, (int) (210 * flicker)),
-                    0, 360, new Color(255, 255, 230, 0)
-                ));
-                g2.fillPolygon(new int[]{330, 470, 600, 200},
-                               new int[]{70, 70, 360, 360}, 4);
-
-                g2.setPaint(new RadialGradientPaint(
-                    new Point2D.Float(400, 60), 220,
-                    new float[]{0f, 1f},
-                    new Color[]{new Color(255, 255, 255, (int) (230 * flicker)),
-                                new Color(255, 255, 255, 0)}
-                ));
-                g2.fillOval(180, -160, 440, 440);
-
-                // A small figure floating up the beam
-                int figureY = 330 - (int) ((frame % 240) * 0.8);
-                g2.setColor(new Color(25, 25, 45, 220));
-                g2.fillOval(393, figureY, 14, 14);
-                g2.fillOval(390, figureY + 14, 20, 40);
-                break;
-            }
-
-            case MOTHERSHIP: {
-
-                Graphics2D shipGraphics = (Graphics2D) g2.create();
-                shipGraphics.translate(400, 215);
-                shipGraphics.scale(1.5, 1.5);
-
-                storyBoss.placeAt(-65, -85 + (int) (Math.sin(frame * 0.05) * 5));
-                storyBoss.draw(shipGraphics);
-
-                shipGraphics.dispose();
-                break;
-            }
-
-            case LETTER: {
-
-                g2.setPaint(new RadialGradientPaint(
-                    new Point2D.Float(400, 215), 200,
-                    new float[]{0f, 1f},
-                    new Color[]{new Color(255, 220, 140, 90), new Color(255, 220, 140, 0)}
-                ));
-                g2.fillOval(200, 15, 400, 400);
-
-                g2.setColor(new Color(236, 226, 200));
-                g2.fillRect(300, 150, 200, 130);
-
-                g2.setColor(new Color(222, 210, 180));
-                g2.fillPolygon(new int[]{300, 500, 400}, new int[]{150, 150, 225}, 3);
-
-                g2.setStroke(new BasicStroke(1.5f));
-                g2.setColor(new Color(170, 155, 125));
-                g2.drawRect(300, 150, 200, 130);
-                g2.drawLine(300, 150, 400, 225);
-                g2.drawLine(500, 150, 400, 225);
-                g2.drawLine(300, 280, 375, 215);
-                g2.drawLine(500, 280, 425, 215);
-
-                g2.setColor(new Color(170, 30, 40));
-                g2.fillOval(386, 211, 28, 28);
-                g2.setColor(new Color(225, 95, 95));
-                g2.fillOval(393, 218, 10, 10);
-                break;
-            }
-
-            case EARTH:
-                background.drawEarth(g2, 400, 215, 120);
-                break;
-
-            case POD: {
-
-                Graphics2D podGraphics = (Graphics2D) g2.create();
-                podGraphics.translate(0, (int) (Math.sin(frame * 0.04) * 6));
-
-                podGraphics.setPaint(new RadialGradientPaint(
-                    new Point2D.Float(400, 220), 190,
-                    new float[]{0f, 1f},
-                    new Color[]{new Color(255, 230, 170, 110), new Color(255, 230, 170, 0)}
-                ));
-                podGraphics.fillOval(210, 30, 380, 380);
-
-                podGraphics.setColor(new Color(70, 80, 100));
-                podGraphics.fillRoundRect(300, 175, 200, 90, 90, 90);
-
-                podGraphics.setColor(new Color(130, 225, 255, 190));
-                podGraphics.fillRoundRect(318, 188, 164, 64, 64, 64);
-
-                podGraphics.setColor(new Color(255, 240, 200, 160));
-                podGraphics.fillRoundRect(340, 200, 120, 40, 40, 40);
-
-                podGraphics.setColor(new Color(255, 90, 90));
-                podGraphics.fillOval(309, 216, 6, 6);
-                podGraphics.fillOval(485, 216, 6, 6);
-
-                podGraphics.dispose();
-                break;
-            }
-
-            case WORMHOLE:
-                background.drawWormhole(g2, 400, 215, 135);
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    // ---------- Gameplay ----------
-
-    private void drawGameplay(Graphics2D g2) {
-
-        // The world shakes a little when something big happens; the HUD does not
-        Graphics2D world = (Graphics2D) g2.create();
-
-        if (shakeTimer > 0) {
-            world.translate(random.nextInt(7) - 3, random.nextInt(7) - 3);
-        }
-
-        for (PowerUp powerUp : powerUps) {
-            powerUp.draw(world);
-        }
-
-        for (Enemy enemy : enemies) {
-            enemy.draw(world);
-        }
-
-        if (boss != null) {
-            boss.draw(world);
-        }
-
-        for (Bullet bullet : bullets) {
-            bullet.draw(world);
-        }
-
-        for (BossBullet shot : enemyBullets) {
-            shot.draw(world);
-        }
-
-        if (currentState != GameState.GAME_OVER) {
-            player.draw(world);
-        }
-
-        for (Explosion explosion : explosions) {
-            explosion.draw(world);
-        }
-
-        world.dispose();
-
-        drawHUD(g2);
-
-        // Hide the big centre messages while paused so they don't overlap "PAUSED"
-        if (currentState != GameState.PAUSED) {
-            drawBanner(g2);
-            drawWarning(g2);
-        }
-
-        drawRadio(g2);
-        drawPickupText(g2);
-
-    }
-
-    // HUD
-
-    private void drawHUD(Graphics2D g2) {
-
-        g2.setColor(new Color(10, 20, 45, 215));
-        g2.fillRoundRect(10, 8, 780, 44, 12, 12);
-
-        g2.setStroke(new BasicStroke(1.5f));
-        g2.setColor(new Color(70, 120, 200, 150));
-        g2.drawRoundRect(10, 8, 780, 44, 12, 12);
-
-        // Score
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("SCORE", 26, 25);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 20));
-        g2.setColor(Color.CYAN);
-        g2.drawString(String.valueOf(score), 26, 46);
-
-        // Credits (spent on upgrades)
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("CREDITS", 114, 25);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 20));
-        g2.setColor(new Color(255, 214, 90));
-        g2.drawString(String.valueOf(upgrades.getCredits()), 114, 46);
-
-        // Centre: what you are working towards
-        String label;
-        String barText;
-        double fraction;
-        Color fill;
-
-        if (boss != null) {
-
-            label = boss.getName();
-            fraction = (double) boss.getHealth() / boss.getMaxHealth();
-            fill = new Color(220, 40, 40);
-            barText = boss.getHealth() + " / " + boss.getMaxHealth();
-
-        } else if (selectedMode == GameMode.HARDCORE) {
-
-            label = "HARDCORE  -  BOSSES DEFEATED: " + hardcoreBossesDefeated;
-            fraction = Math.min(1.0, enemiesSinceBoss / (double) bossSpawnThreshold);
-            fill = new Color(255, 150, 40);
-            barText = "NEXT BOSS";
-
-        } else {
-
-            if (mission != null && selectedMode == GameMode.ADVENTURE) {
-                label = "MISSION " + missionNumber + ": " + missionName;
-            } else {
-                label = missionName;
-            }
-
-            fraction = progress();
-            fill = new Color(40, 170, 255);
-
-            if (mission != null && mission.objective == Mission.Objective.SURVIVE) {
-                int secondsLeft = Math.max(0, mission.target - missionTicks / TICKS_PER_SECOND);
-                barText = secondsLeft + "s TO THE WORMHOLE";
-            } else {
-                barText = enemiesDefeated + " / " + missionTarget;
-            }
-        }
-
-        g2.setFont(new Font("Arial", Font.BOLD, 12));
-        g2.setColor(new Color(255, 224, 125));
-        drawCenteredAt(g2, label, 390, 24);
-
-        drawBar(g2, 200, 29, 380, 16, fraction, fill, barText);
-
-        // Lives
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("LIVES", 636, 25);
-
-        for (int i = 0; i < MAX_LIVES; i++) {
-            Color heart = (i < lives) ? new Color(255, 70, 90) : new Color(60, 40, 55);
-            drawHeart(g2, 636 + i * 25, 29, 17, heart);
-        }
-
-        drawAmmo(g2);
-
-        // Active power-ups
-        int statusY = 100;
-
-        if (rapidTimer > 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 12));
-            g2.setColor(new Color(255, 190, 60));
-            g2.drawString("RAPID FIRE", 20, statusY);
-            drawBar(g2, 100, statusY - 9, 90, 8, rapidTimer / (8.0 * TICKS_PER_SECOND),
-                    new Color(255, 170, 30), null);
-            statusY += 18;
-        }
-
-        if (shieldTimer > 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 12));
-            g2.setColor(new Color(110, 220, 255));
-            g2.drawString("SHIELD", 20, statusY);
-            drawBar(g2, 100, statusY - 9, 90, 8, shieldTimer / (15.0 * TICKS_PER_SECOND),
-                    new Color(50, 190, 255), null);
-        }
-    }
-
-    /** The magazine: rounds left, or a reload progress bar. */
-    private void drawAmmo(Graphics2D g2) {
-
-        int max = upgrades.getAmmoMax();
-        double fraction;
-        String text;
-        Color fill;
-
-        if (rapidTimer > 0) {
-            fraction = 1.0;
-            text = "UNLIMITED";
-            fill = new Color(255, 170, 30);
-        } else if (reloadTimer > 0) {
-            fraction = 1.0 - reloadTimer / (double) reloadTotal;
-            text = "RELOADING";
-            fill = new Color(255, 200, 60);
-        } else {
-            fraction = ammo / (double) max;
-            text = ammo + " / " + max;
-            fill = fraction > 0.5 ? new Color(80, 210, 110)
-                 : fraction > 0.25 ? new Color(240, 200, 60)
-                 : new Color(235, 70, 70);
-        }
-
-        g2.setFont(new Font("Arial", Font.BOLD, 12));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("AMMO", 20, 76);
-
-        drawBar(g2, 62, 65, 130, 14, fraction, fill, text);
-
-        // A hint when the magazine is nearly empty
-        if (reloadTimer == 0 && rapidTimer == 0 && ammo <= max / 4 && (frame / 20) % 2 == 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 11));
-            g2.setColor(new Color(255, 120, 110));
-            g2.drawString("PRESS R TO RELOAD", 200, 76);
-        }
-    }
-
-    private void drawBar(Graphics2D g2, int x, int y, int w, int h,
-                         double fraction, Color fill, String text) {
-
-        fraction = Math.max(0.0, Math.min(1.0, fraction));
-
-        g2.setColor(new Color(0, 0, 0, 150));
-        g2.fillRoundRect(x, y, w, h, h, h);
-
-        if (fraction > 0) {
-            g2.setColor(fill);
-            g2.fillRoundRect(x, y, Math.max(h, (int) (w * fraction)), h, h, h);
-        }
-
-        g2.setStroke(new BasicStroke(1f));
-        g2.setColor(new Color(255, 255, 255, 110));
-        g2.drawRoundRect(x, y, w, h, h, h);
-
-        if (text != null) {
-            g2.setFont(new Font("Arial", Font.BOLD, 11));
-            g2.setColor(new Color(0, 0, 0, 170));
-            drawCenteredAt(g2, text, x + w / 2 + 1, y + h - 3);
-            g2.setColor(Color.WHITE);
-            drawCenteredAt(g2, text, x + w / 2, y + h - 4);
-        }
-    }
-
-    private void drawHeart(Graphics2D g2, int x, int y, int size, Color color) {
-
-        g2.setColor(color);
-        g2.fillOval(x, y, size / 2 + 1, size / 2 + 1);
-        g2.fillOval(x + size / 2 - 1, y, size / 2 + 1, size / 2 + 1);
-        g2.fillPolygon(
-            new int[]{x + 1, x + size - 1, x + size / 2},
-            new int[]{y + size / 4 + 1, y + size / 4 + 1, y + size},
-            3
-        );
-    }
-
-    // On-screen messages
-
-    private void drawBanner(Graphics2D g2) {
-
-        if (bannerTimer <= 0) {
-            return;
-        }
-
-        // Fade in, hold, fade out
-        double fade = Math.min(1.0, Math.min(bannerTimer / 40.0,
-                                             (BANNER_TIME - bannerTimer) / 30.0));
-        int alpha = (int) (255 * Math.max(0.0, fade));
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 22));
-        g2.setColor(new Color(255, 224, 125, alpha));
-        drawCenteredString(g2, spaced(bannerTitle), 235);
-
-        g2.setColor(new Color(255, 255, 255, alpha / 3));
-        g2.fillRect(250, 248, 300, 2);
-
-        g2.setFont(fitFont(g2, bannerSubtitle, "Arial", Font.BOLD, 36, 720));
-        g2.setColor(new Color(255, 255, 255, alpha));
-        drawCenteredString(g2, bannerSubtitle, 292);
-    }
-
-    private void drawWarning(Graphics2D g2) {
-
-        if (warningTimer <= 0 || (warningTimer / 8) % 2 != 0) {
-            return;
-        }
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 32));
-        g2.setColor(new Color(255, 60, 60));
-        drawCenteredString(g2, "!! WARNING !!", 120);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 16));
-        g2.setColor(Color.WHITE);
-        drawCenteredString(g2, (boss != null ? boss.getName() : "BOSS") + " APPROACHING", 146);
-    }
-
-    private void drawRadio(Graphics2D g2) {
-
-        if (radioTimer <= 0) {
-            return;
-        }
-
-        double fade = Math.min(1.0, radioTimer / 40.0);
-        int alpha = (int) (255 * fade);
-
-        Color accent;
-
-        if (radioSpeaker.equals("COMMAND")) {
-            accent = new Color(110, 200, 255);
-        } else if (radioSpeaker.equals("PILOT")) {
-            accent = new Color(255, 224, 125);
-        } else {
-            accent = new Color(255, 100, 210);
-        }
-
-        g2.setColor(new Color(4, 12, 28, (int) (215 * fade)));
-        g2.fillRoundRect(40, 532, 720, 52, 14, 14);
-
-        g2.setStroke(new BasicStroke(1.5f));
-        g2.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), alpha));
-        g2.drawRoundRect(40, 532, 720, 52, 14, 14);
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 13));
-        g2.drawString("[ " + radioSpeaker + " ]", 58, 552);
-
-        g2.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        g2.setColor(new Color(255, 255, 255, alpha));
-        g2.drawString(radioText, 58, 573);
-    }
-
-    private void drawPickupText(Graphics2D g2) {
-
-        if (pickupTimer <= 0) {
-            return;
-        }
-
-        int alpha = (int) (255 * Math.min(1.0, pickupTimer / 30.0));
-
-        g2.setFont(new Font("Arial", Font.BOLD, 18));
-        g2.setColor(new Color(255, 255, 255, alpha));
-        drawCenteredString(g2, pickupText, 92);
-    }
-
-    // PAUSED
-
-    private void drawPaused(Graphics2D g2) {
-
-        g2.setColor(new Color(0, 0, 0, 170));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        g2.setColor(Color.CYAN);
-        g2.setFont(new Font("Monospaced", Font.BOLD, 46));
-        drawCenteredString(g2, "PAUSED", 255);
-
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("Arial", Font.PLAIN, 20));
-        drawCenteredString(g2, "PRESS P OR ESC TO RESUME", 320);
-
-        g2.setColor(new Color(170, 185, 210));
-        drawCenteredString(g2, "PRESS M FOR THE MAIN MENU", 360);
-    }
-
-    // MISSION COMPLETE
-
-    private void drawMissionComplete(Graphics2D g2) {
-
-        g2.setColor(new Color(0, 0, 0, 215));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        g2.setColor(Color.GREEN);
-        g2.setFont(new Font("Arial", Font.BOLD, 42));
-        drawCenteredString(g2,
-            selectedMode == GameMode.LEVEL ? "LEVEL COMPLETE!" : "MISSION COMPLETE!", 215);
-
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("Arial", Font.BOLD, 23));
-        drawCenteredString(g2,
-            (mission != null && selectedMode == GameMode.ADVENTURE)
-                ? "MISSION " + missionNumber + ": " + missionName : missionName,
-            275);
-
-        g2.setColor(Color.CYAN);
-        g2.setFont(new Font("Arial", Font.PLAIN, 20));
-        drawCenteredString(g2, missionSummary, 330);
-        drawCenteredString(g2, "TOTAL SCORE: " + score
-            + (selectedMode == GameMode.LEVEL ? "" : "      CREDITS: " + upgrades.getCredits()), 370);
-
-        if (newHighScore) {
-            g2.setColor(new Color(255, 224, 125));
-            g2.setFont(new Font("Arial", Font.BOLD, 18));
-            drawCenteredString(g2, "NEW HIGH SCORE!", 405);
-        }
-
-        g2.setColor(Color.YELLOW);
-        g2.setFont(new Font("Arial", Font.BOLD, 19));
-
-        if (selectedMode == GameMode.LEVEL) {
-
-            if (selectedDifficulty != Difficulty.HARD) {
-                Difficulty next = Difficulty.values()[selectedDifficulty.ordinal() + 1];
-                drawCenteredString(g2, "PRESS ENTER FOR THE " + next + " LEVEL", 460);
-            } else {
-                drawCenteredString(g2, "ALL LEVELS CLEARED!", 460);
-            }
-
-            g2.setColor(Color.WHITE);
-            g2.setFont(new Font("Arial", Font.PLAIN, 17));
-            drawCenteredString(g2, "PRESS M TO RETURN TO MENU", 495);
-
-        } else {
-            drawCenteredString(g2, "PRESS ENTER TO CONTINUE", 465);
-        }
-    }
-
-    // GAME OVER
-
-    private void drawGameOver(Graphics2D g2) {
-
-        // The screen fades to black so you can watch your ship explode first
-        g2.setColor(new Color(0, 0, 0, Math.min(215, gameOverTimer * 4)));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        if (gameOverTimer < 30) {
-            return;
-        }
-
-        g2.setColor(Color.RED);
-        g2.setFont(new Font("Arial", Font.BOLD, 48));
-        drawCenteredString(g2, "GAME OVER", 225);
-
-        g2.setColor(Color.WHITE);
-        g2.setFont(new Font("Arial", Font.BOLD, 24));
-        drawCenteredString(g2, "FINAL SCORE: " + score, 290);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 18));
-
-        if (selectedMode == GameMode.HARDCORE) {
-            g2.setColor(Color.CYAN);
-            drawCenteredString(g2, "BOSSES DEFEATED: " + hardcoreBossesDefeated, 328);
-        } else if (mission != null) {
-            g2.setColor(Color.CYAN);
-            drawCenteredString(g2, (selectedMode == GameMode.ADVENTURE
-                ? "MISSION " + missionNumber + ": " : "") + missionName, 328);
-        }
-
-        if (newHighScore) {
-            g2.setColor(new Color(255, 224, 125));
-            drawCenteredString(g2, "NEW HIGH SCORE!", 358);
-        } else {
-            g2.setColor(new Color(160, 175, 200));
-            g2.setFont(new Font("Arial", Font.PLAIN, 16));
-            drawCenteredString(g2, "BEST: " + bestFor(scoreKey()), 358);
-        }
-
-        g2.setColor(Color.YELLOW);
-        g2.setFont(new Font("Arial", Font.PLAIN, 20));
-        drawCenteredString(g2,
-            (selectedMode == GameMode.ADVENTURE && mission != null)
-                ? "PRESS R TO RETRY THE MISSION" : "PRESS R TO RESTART",
-            410);
-
-        g2.setColor(Color.WHITE);
-        drawCenteredString(g2, "PRESS M TO RETURN TO MENU", 450);
-    }
-
-    // VICTORY (after the last mission and ending story)
-
-    private void drawVictory(Graphics2D g2) {
-
-        g2.setColor(new Color(0, 0, 0, 120));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 56));
-        g2.setColor(new Color(255, 224, 125));
-        drawCenteredString(g2, "THE END", 150);
-
-        String name = spaced(Story.WINDOW_TITLE);
-        g2.setFont(fitFont(g2, name, "SansSerif", Font.BOLD, 15, 720));
-        g2.setColor(new Color(235, 240, 248));
-        drawCenteredString(g2, name, 190);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 24));
-        g2.setColor(Color.WHITE);
-        drawCenteredString(g2, "YOU BROUGHT HER HOME.", 270);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 22));
-        g2.setColor(Color.CYAN);
-        drawCenteredString(g2, "FINAL SCORE: " + score, 330);
-
-        if (newHighScore) {
-            g2.setFont(new Font("Arial", Font.BOLD, 18));
-            g2.setColor(new Color(255, 224, 125));
-            drawCenteredString(g2, "NEW HIGH SCORE!", 362);
-        } else {
-            g2.setFont(new Font("Arial", Font.PLAIN, 16));
-            g2.setColor(new Color(160, 175, 200));
-            drawCenteredString(g2, "BEST: " + bestFor("adventure"), 362);
-        }
-
-        g2.setFont(new Font("Arial", Font.PLAIN, 18));
-        g2.setColor(new Color(225, 232, 245));
-        drawCenteredString(g2, "THANK YOU FOR PLAYING", 420);
-
-        if ((frame / 30) % 2 == 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 18));
-            g2.setColor(Color.YELLOW);
-            drawCenteredString(g2, "PRESS ENTER TO RETURN TO MENU", 500);
-        }
-    }
-
-    // ---------- Upgrade station ----------
-
-    private void drawUpgradeStation(Graphics2D g2) {
-
-        g2.setColor(new Color(0, 0, 0, 110));
-        g2.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        String title = spaced("UPGRADE STATION");
-        g2.setFont(fitFont(g2, title, "Monospaced", Font.BOLD, 28, 700));
-        g2.setColor(new Color(255, 224, 125));
-        drawCenteredString(g2, title, 48);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 20));
-        g2.setColor(new Color(255, 214, 90));
-        drawCenteredString(g2, "CREDITS: " + upgrades.getCredits(), 80);
-
-        // Your ship, as it looks right now
-        g2.setPaint(new RadialGradientPaint(
-            new Point2D.Float(400, 170), 120,
-            new float[]{0f, 1f},
-            new Color[]{new Color(60, 140, 255, 90), new Color(60, 140, 255, 0)}
-        ));
-        g2.fillOval(280, 50, 240, 240);
-
-        Graphics2D shipGraphics = (Graphics2D) g2.create();
-        shipGraphics.translate(400, 168);
-        shipGraphics.scale(2.2, 2.2);
-        previewPlayer.setLoadout(upgrades);
-        previewPlayer.placeAt(-30, -20);
-        previewPlayer.draw(shipGraphics);
-        shipGraphics.dispose();
-
-        g2.setFont(new Font("Monospaced", Font.BOLD, 16));
-        g2.setColor(Color.CYAN);
-        drawCenteredString(g2, "SHIP CLASS: " + upgrades.getShipClass(), 262);
-
-        if (upgradeMessageTimer > 0) {
-            g2.setFont(new Font("Arial", Font.BOLD, 15));
-            g2.setColor(upgradeMessageGood ? new Color(110, 235, 140) : new Color(255, 120, 110));
-            drawCenteredString(g2, upgradeMessage, 288);
-        }
-
-        for (int i = 0; i < Upgrades.TRACKS; i++) {
-            drawUpgradeCard(g2, i);
-        }
-
-        drawMenuButton(g2, LAUNCH_BUTTON, "LAUNCH",
-                       new Color(255, 125, 55), hoveredButton == LAUNCH_BUTTON);
-
-        g2.setFont(new Font("Arial", Font.PLAIN, 12));
-        g2.setColor(new Color(170, 185, 210));
-        drawCenteredString(g2, "PRESS 1 - 4 OR CLICK A CARD TO BUY        ENTER TO LAUNCH", 588);
-    }
-
-    private void drawUpgradeCard(Graphics2D g2, int track) {
-
-        Rectangle r = UPGRADE_CARDS[track];
-        boolean hovered = (hoveredButton == r);
-        boolean maxed = upgrades.isMaxed(track);
-        boolean affordable = upgrades.canAfford(track);
-
-        g2.setColor(hovered ? new Color(30, 50, 90, 235) : new Color(5, 12, 30, 215));
-        g2.fillRoundRect(r.x, r.y, r.width, r.height, 14, 14);
-
-        g2.setStroke(new BasicStroke(2f));
-        g2.setColor(maxed ? new Color(255, 214, 90)
-                  : affordable ? new Color(80, 220, 120)
-                  : new Color(90, 110, 150));
-        g2.drawRoundRect(r.x, r.y, r.width, r.height, 14, 14);
-
-        // Hotkey and name
-        g2.setFont(new Font("Monospaced", Font.BOLD, 14));
-        g2.setColor(new Color(255, 224, 125));
-        g2.drawString("[" + (track + 1) + "]", r.x + 12, r.y + 26);
-
-        g2.setFont(new Font("Arial", Font.BOLD, 16));
-        g2.setColor(Color.WHITE);
-        g2.drawString(Upgrades.NAMES[track], r.x + 46, r.y + 26);
-
-        // Level pips
-        int steps = upgrades.getMaxLevel(track) - upgrades.getStartLevel(track);
-        int bought = upgrades.getLevel(track) - upgrades.getStartLevel(track);
-
-        for (int pip = 0; pip < steps; pip++) {
-            int px = r.x + 14 + pip * 20;
-            if (pip < bought) {
-                g2.setColor(Color.CYAN);
-                g2.fillOval(px, r.y + 40, 14, 14);
-            } else {
-                g2.setColor(new Color(110, 130, 170));
-                g2.drawOval(px, r.y + 40, 14, 14);
-            }
-        }
-
-        // What you have now
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("NOW", r.x + 14, r.y + 78);
-
-        g2.setFont(new Font("Arial", Font.PLAIN, 13));
-        g2.setColor(Color.WHITE);
-        int ty = r.y + 94;
-        for (String line : wrapText(upgrades.currentText(track), g2.getFontMetrics(), r.width - 28)) {
-            g2.drawString(line, r.x + 14, ty);
-            ty += 16;
-        }
-
-        // What the next level gives
-        g2.setFont(new Font("Arial", Font.BOLD, 11));
-        g2.setColor(new Color(150, 170, 205));
-        g2.drawString("NEXT", r.x + 14, r.y + 132);
-
-        g2.setFont(new Font("Arial", Font.PLAIN, 13));
-        g2.setColor(maxed ? new Color(255, 214, 90) : new Color(190, 235, 255));
-        ty = r.y + 148;
-        for (String line : wrapText(upgrades.nextText(track), g2.getFontMetrics(), r.width - 28)) {
-            g2.drawString(line, r.x + 14, ty);
-            ty += 16;
-        }
-
-        // Price
-        g2.setFont(new Font("Arial", Font.BOLD, 15));
-
-        if (maxed) {
-            g2.setColor(new Color(255, 214, 90));
-            drawCenteredAt(g2, "MAX LEVEL", r.x + r.width / 2, r.y + r.height - 12);
-        } else {
-            g2.setColor(affordable ? new Color(110, 235, 140) : new Color(255, 120, 110));
-            drawCenteredAt(g2, "COST: " + upgrades.nextCost(track), r.x + r.width / 2, r.y + r.height - 12);
-        }
-    }
-
-    // ---------- Text helpers ----------
-
-    private void drawCenteredString(Graphics g, String text, int y) {
-
-        int textWidth = g.getFontMetrics().stringWidth(text);
-
-        int x = (SCREEN_WIDTH - textWidth) / 2;
-
-        g.drawString(text, x, y);
-
-    }
-
-    /** Centres text around a given x position instead of the middle of the screen. */
-    private void drawCenteredAt(Graphics g, String text, int centerX, int y) {
-
-        int textWidth = g.getFontMetrics().stringWidth(text);
-
-        g.drawString(text, centerX - textWidth / 2, y);
-
-    }
-
-    /** Draws centred text with a dark shadow so it is readable on the Earth photo. */
-    private void drawShadowed(Graphics2D g2, String text, int y) {
-
-        Color color = g2.getColor();
-
-        g2.setColor(new Color(0, 0, 0, 190));
-        int textWidth = g2.getFontMetrics().stringWidth(text);
-        g2.drawString(text, (SCREEN_WIDTH - textWidth) / 2 + 1, y + 1);
-
-        g2.setColor(color);
-        drawCenteredString(g2, text, y);
     }
 
 }
