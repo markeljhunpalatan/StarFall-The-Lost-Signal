@@ -886,48 +886,296 @@ final class Screens {
 
     private void drawSettings(Graphics2D g) {
 
-        UI.glass(g, 170, 66, 460, 510, 22, UI.VIOLET);
+        g.setFont(UI.bold(28f));
+        UI.title(g, "Settings", W / 2, 50, 1.5f, Color.WHITE, new Color(200, 220, 255), 0);
 
-        heading(g, "Settings", null, 112);
-
-        g.setFont(UI.bold(13f));
-        g.setColor(UI.MUTED);
-        g.drawString("Controls", 198, 148);
-
-        keyRow(g, 198, 160, new String[]{"W", "S"}, "Move up and down");
-        keyRow(g, 198, 192, new String[]{"A", "D"}, "Move left and right");
-        keyRow(g, 198, 224, new String[]{"Space"}, "Shoot");
-        keyRow(g, 198, 256, new String[]{"Shift"}, "Boost");
-        keyRow(g, 420, 160, new String[]{"R"}, "Reload");
-        keyRow(g, 420, 192, new String[]{"1-4"}, "Quick shop");
-        keyRow(g, 420, 224, new String[]{"P"}, "Pause");
-        keyRow(g, 420, 256, new String[]{"V"}, "Mute");
-
-        if (!game.sound.isAvailable()) {
-            g.setFont(UI.plain(12f));
-            g.setColor(UI.alpha(UI.RED, 220));
-            UI.center(g, "No sound device was found, so the game will stay silent.", W / 2, 306);
-        }
-
-        spawnRow(g, GamePanel.SPAWN_BUTTON);
-        toggleRow(g, GamePanel.SOUND_BUTTON, "Sound effects", game.sound.isSoundOn());
-        toggleRow(g, GamePanel.MUSIC_BUTTON, "Music", game.sound.isMusicOn());
-
-        // Reset progress needs two clicks
-        Rectangle r = GamePanel.RESET_BUTTON;
-        boolean confirming = game.resetConfirmTimer > 0;
-        rowBackground(g, r, UI.RED, hover(r) || confirming);
-
-        g.setFont(UI.bold(15f));
-        g.setColor(UI.RED);
-        g.drawString("Reset progress", r.x + 16, r.y + 28);
-
-        g.setFont(UI.plain(12f));
-        g.setColor(confirming ? Color.WHITE : UI.MUTED);
-        UI.right(g, confirming ? "Click again to erase" : "Erases your save",
-                 r.x + r.width - 16, r.y + 27);
+        drawGameplayCard(g);
+        drawAudioCard(g);
+        drawControlsCard(g);
+        drawSaveCard(g);
 
         UI.button(g, GamePanel.BACK_BUTTON, "BACK", UI.VIOLET, hover(GamePanel.BACK_BUTTON), true, game.frame);
+    }
+
+    /** A settings card: a glass panel with a small icon and a heading. */
+    private void settingsCard(Graphics2D g, int x, int y, int w, int h, UI.Icon icon, String title, Color accent) {
+
+        UI.glass(g, x, y, w, h, 18, accent);
+        iconBadge(g, icon, x + 26, y + 24, 12, accent);
+        g.setFont(UI.bold(12f));
+        g.setColor(accent);
+        UI.trackedLeft(g, title, x + 46, y + 29, 2f);
+    }
+
+    /** Gameplay: how many aliens come, picked from FEW, NORMAL or MANY. */
+    private void drawGameplayCard(Graphics2D g) {
+
+        settingsCard(g, 40, 70, 350, 200, UI.Icon.TARGET, "GAMEPLAY", UI.GREEN);
+
+        g.setFont(UI.bold(15f));
+        g.setColor(Color.WHITE);
+        g.drawString("Spawn amount", 60, 130);
+        g.setFont(UI.plain(11f));
+        g.setColor(UI.MUTED);
+        g.drawString("Aliens, ambush waves and asteroids", 60, 150);
+
+        // The three choices, side by side: the one in use is lit
+        Rectangle box = GamePanel.SPAWN_BUTTON;
+        g.setColor(new Color(0, 0, 0, 120));
+        g.fillRoundRect(box.x, box.y, box.width, box.height, 14, 14);
+        g.setStroke(new BasicStroke(1.2f));
+        g.setColor(new Color(255, 255, 255, 40));
+        g.drawRoundRect(box.x, box.y, box.width, box.height, 14, 14);
+
+        GamePanel.SpawnRate[] rates = GamePanel.SpawnRate.values();
+        String[] notes = {"A calmer game: fewer aliens", "The game as it was made", "Busier, with more credits to win"};
+
+        for (int i = 0; i < rates.length; i++) {
+
+            Rectangle seg = GamePanel.SPAWN_SEGMENTS[i];
+            boolean on = (game.spawnRate == rates[i]);
+            Color accent = spawnColour(rates[i]);
+
+            if (on) {
+                g.setPaint(new GradientPaint(seg.x, seg.y, UI.mix(accent, Color.WHITE, 0.25), seg.x, seg.y + seg.height, UI.mix(accent, UI.DARK, 0.35)));
+                g.fillRoundRect(seg.x, seg.y, seg.width, seg.height, 10, 10);
+            } else if (hover(seg)) {
+                g.setColor(UI.alpha(accent, 50));
+                g.fillRoundRect(seg.x, seg.y, seg.width, seg.height, 10, 10);
+            }
+
+            // Dots showing how many: one, two or three little aliens
+            int dots = i + 1;
+            int dx = seg.x + seg.width / 2 - (dots * 9) / 2 + 2;
+            for (int k = 0; k < dots; k++) {
+                g.setColor(on ? UI.DARK : UI.alpha(accent, 200));
+                g.fillOval(dx + k * 9, seg.y + 7, 6, 6);
+            }
+
+            g.setFont(UI.bold(12f));
+            g.setColor(on ? UI.DARK : (hover(seg) ? Color.WHITE : UI.TEXT));
+            UI.center(g, rates[i].name(), seg.x + seg.width / 2, seg.y + 28);
+        }
+
+        Color now = spawnColour(game.spawnRate);
+        g.setFont(UI.bold(12f));
+        g.setColor(now);
+        g.drawString("x" + game.spawnRate.rate + "  ", 60, 234);
+        int lead = UI.width(g, "x" + game.spawnRate.rate + "  ");
+        g.setFont(UI.plain(12f));
+        g.setColor(UI.TEXT);
+        g.drawString(notes[game.spawnRate.ordinal()], 60 + lead, 234);
+
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        int kx = 60 + UI.keycap(g, "<", 60, 241) + 3;
+        kx += UI.keycap(g, ">", kx, 241) + 6;
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        g.drawString("keys also change it", kx, 256);
+    }
+
+    private static Color spawnColour(GamePanel.SpawnRate rate) {
+        switch (rate) {
+            case FEW:  return UI.CYAN;
+            case MANY: return UI.ORANGE;
+            default:   return UI.GREEN;
+        }
+    }
+
+    /** Audio: switches for the sound effects and the music. */
+    private void drawAudioCard(Graphics2D g) {
+
+        settingsCard(g, 410, 70, 350, 200, UI.Icon.BOLT, "AUDIO", UI.CYAN);
+
+        audioRow(g, GamePanel.SOUND_BUTTON, false, "Sound effects", "Shots, explosions and alerts", game.sound.isSoundOn());
+        audioRow(g, GamePanel.MUSIC_BUTTON, true, "Music", "A soundtrack for every screen and mission", game.sound.isMusicOn());
+
+        if (!game.sound.isAvailable()) {
+            g.setFont(UI.plain(11f));
+            g.setColor(UI.alpha(UI.RED, 230));
+            g.drawString("No sound device found: the game stays silent", 430, 256);
+        } else {
+            int kx = 430 + UI.keycap(g, "V", 430, 241) + 6;
+            g.setFont(UI.plain(10.5f));
+            g.setColor(UI.MUTED);
+            g.drawString("mutes or unmutes everything, at any time", kx, 256);
+        }
+    }
+
+    /** One audio row: an icon, the name and what it covers, and an on/off switch. */
+    private void audioRow(Graphics2D g, Rectangle r, boolean music, String title, String note, boolean on) {
+
+        boolean hovered = hover(r);
+        g.setColor(new Color(255, 255, 255, hovered ? 22 : 8));
+        g.fillRoundRect(r.x, r.y, r.width, r.height, 14, 14);
+        g.setStroke(new BasicStroke(1.2f));
+        g.setColor(UI.alpha(UI.CYAN, hovered ? 170 : 50));
+        g.drawRoundRect(r.x, r.y, r.width, r.height, 14, 14);
+
+        int ix = r.x + 26;
+        int iy = r.y + r.height / 2;
+        Color icon = on ? UI.CYAN : UI.MUTED;
+        g.setColor(icon);
+        if (music) {
+            // A pair of musical notes
+            g.fillOval(ix - 9, iy + 3, 8, 6);
+            g.fillOval(ix + 3, iy + 1, 8, 6);
+            g.setStroke(new BasicStroke(2f));
+            g.drawLine(ix - 2, iy + 5, ix - 2, iy - 9);
+            g.drawLine(ix + 10, iy + 3, ix + 10, iy - 11);
+            g.drawLine(ix - 2, iy - 9, ix + 10, iy - 11);
+        } else {
+            // A speaker
+            g.fillRect(ix - 9, iy - 4, 5, 8);
+            g.fillPolygon(new int[]{ix - 4, ix + 3, ix + 3, ix - 4}, new int[]{iy - 4, iy - 10, iy + 10, iy + 4}, 4);
+            if (on) {
+                g.setStroke(new BasicStroke(1.8f));
+                g.drawArc(ix + 3, iy - 6, 8, 12, -50, 100);
+                g.drawArc(ix + 3, iy - 10, 14, 20, -50, 100);
+            } else {
+                g.setStroke(new BasicStroke(2f));
+                g.drawLine(ix + 6, iy - 4, ix + 13, iy + 4);
+                g.drawLine(ix + 13, iy - 4, ix + 6, iy + 4);
+            }
+        }
+        g.setStroke(new BasicStroke(1f));
+
+        g.setFont(UI.bold(14f));
+        g.setColor(Color.WHITE);
+        g.drawString(title, r.x + 50, r.y + 24);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        g.drawString(note, r.x + 50, r.y + 41);
+
+        drawSwitch(g, r.x + r.width - 62, r.y + (r.height - 26) / 2, on);
+    }
+
+    /** An on/off switch: a pill with a knob that sits right (green) when on and left (grey) when off. */
+    private void drawSwitch(Graphics2D g, int x, int y, boolean on) {
+
+        int w = 50;
+        int h = 26;
+        if (on) {
+            g.setPaint(new GradientPaint(x, y, UI.mix(UI.GREEN, Color.WHITE, 0.2), x, y + h, UI.mix(UI.GREEN, UI.DARK, 0.3)));
+        } else {
+            g.setColor(new Color(58, 64, 92));
+        }
+        g.fillRoundRect(x, y, w, h, h, h);
+        g.setColor(new Color(255, 255, 255, 60));
+        g.drawRoundRect(x, y, w, h, h, h);
+
+        int knob = h - 6;
+        int kx = on ? x + w - knob - 3 : x + 3;
+        g.setColor(new Color(0, 0, 0, 60));
+        g.fillOval(kx, y + 4, knob, knob);
+        g.setColor(Color.WHITE);
+        g.fillOval(kx, y + 3, knob, knob);
+
+        g.setFont(UI.bold(8.5f));
+        g.setColor(on ? UI.DARK : new Color(170, 176, 200));
+        if (on) {
+            g.drawString("ON", x + 8, y + 17);
+        } else {
+            UI.right(g, "OFF", x + w - 7, y + 17);
+        }
+    }
+
+    /** Controls: every key, in two columns. */
+    private void drawControlsCard(Graphics2D g) {
+
+        settingsCard(g, 40, 282, 350, 238, UI.Icon.GEAR, "CONTROLS", UI.VIOLET);
+
+        String[][] left = {
+            {"W S", "Move up / down"}, {"A D", "Move left / right"}, {"Space", "Shoot (hold)"},
+            {"Shift", "Boost"}, {"R", "Reload"}, {"C", "Switch max weapon"}
+        };
+        String[][] right = {
+            {"1-5", "Quick shop"}, {"Q", "Nova blast"}, {"E", "Overdrive"},
+            {"P", "Pause"}, {"V", "Mute"}, {"Esc", "Back / skip"}
+        };
+
+        for (int i = 0; i < left.length; i++) {
+            controlRow(g, 58, 326 + i * 30, left[i][0], left[i][1]);
+            controlRow(g, 226, 326 + i * 30, right[i][0], right[i][1]);
+        }
+    }
+
+    /** A key (or two, split by a space) and what it does, compactly. */
+    private void controlRow(Graphics2D g, int x, int y, String keys, String action) {
+
+        int kx = x;
+        for (String key : keys.split(" ")) {
+            kx += UI.keycap(g, key, kx, y) + 4;
+        }
+        g.setFont(UI.plain(11.5f));
+        g.setColor(UI.TEXT);
+        g.drawString(action, Math.max(kx + 4, x + 64), y + 16);
+    }
+
+    /** Save data: what is saved, and resetting it (two clicks, with a countdown in between). */
+    private void drawSaveCard(Graphics2D g) {
+
+        settingsCard(g, 410, 282, 350, 238, UI.Icon.SHIELD, "SAVE DATA", UI.GOLD);
+
+        g.setFont(UI.plain(11.5f));
+        g.setColor(UI.TEXT);
+        g.drawString("Your progress saves by itself: ships, credits,", 430, 330);
+        g.drawString("levels, quests, medals and these settings.", 430, 346);
+
+        // A summary of what is saved
+        String[][] stats = {
+            {"Adventure", "Level " + game.profiles.get(GamePanel.GameMode.ADVENTURE).playerLevel()},
+            {"Hardcore", "Level " + game.profiles.get(GamePanel.GameMode.HARDCORE).playerLevel()},
+            {"Level mode", "Level " + game.profiles.get(GamePanel.GameMode.LEVEL).playerLevel()},
+            {"Medals", game.achievements.unlockedCount() + " / " + Achievements.total()}
+        };
+        for (int i = 0; i < stats.length; i++) {
+            int sx = 430 + (i % 2) * 160;
+            int sy = 374 + (i / 2) * 34;
+            g.setColor(new Color(255, 255, 255, 10));
+            g.fillRoundRect(sx, sy - 14, 150, 28, 10, 10);
+            g.setFont(UI.plain(10.5f));
+            g.setColor(UI.MUTED);
+            g.drawString(stats[i][0], sx + 10, sy + 4);
+            g.setFont(UI.bold(12f));
+            g.setColor(Color.WHITE);
+            UI.right(g, stats[i][1], sx + 140, sy + 4);
+        }
+
+        // Reset: the first click arms it, a second click within three seconds erases everything
+        Rectangle r = GamePanel.RESET_BUTTON;
+        boolean confirming = game.resetConfirmTimer > 0;
+        boolean hovered = hover(r);
+
+        if (confirming) {
+            int pulse = (int) (40 + 30 * Math.sin(game.frame * 0.3));
+            g.setColor(UI.alpha(UI.RED, 140 + pulse));
+            g.fillRoundRect(r.x, r.y, r.width, r.height, 14, 14);
+        } else {
+            g.setColor(new Color(255, 70, 90, hovered ? 40 : 14));
+            g.fillRoundRect(r.x, r.y, r.width, r.height, 14, 14);
+        }
+        g.setStroke(new BasicStroke(1.4f));
+        g.setColor(UI.alpha(UI.RED, confirming || hovered ? 230 : 120));
+        g.drawRoundRect(r.x, r.y, r.width, r.height, 14, 14);
+        g.setStroke(new BasicStroke(1f));
+
+        g.setFont(UI.bold(13f));
+        g.setColor(confirming ? Color.WHITE : UI.RED);
+        UI.center(g, confirming ? "CLICK AGAIN TO ERASE EVERYTHING" : "RESET ALL PROGRESS", r.x + r.width / 2, r.y + 27);
+
+        if (confirming) {
+            double left = game.resetConfirmTimer / 180.0;
+            g.setColor(new Color(0, 0, 0, 120));
+            g.fillRoundRect(r.x, r.y + r.height + 6, r.width, 5, 5, 5);
+            g.setColor(UI.RED);
+            g.fillRoundRect(r.x, r.y + r.height + 6, (int) (r.width * left), 5, 5, 5);
+        } else {
+            g.setFont(UI.plain(10f));
+            g.setColor(UI.MUTED);
+            UI.center(g, "Asks twice, so it can't happen by accident", r.x + r.width / 2, r.y + r.height + 14);
+        }
     }
 
     /** Keyboard keys followed by what they do. Returns the x after the text. */
@@ -953,45 +1201,6 @@ final class Screens {
         g.setStroke(new BasicStroke(1.2f));
         g.setColor(UI.alpha(accent, hover ? 190 : 70));
         g.drawRoundRect(r.x, r.y, r.width, r.height, 14, 14);
-    }
-
-    /** A row that cycles through the enemy spawn quantities (click it): FEW, NORMAL or MANY. */
-    private void spawnRow(Graphics2D g, Rectangle r) {
-
-        GamePanel.SpawnRate rate = game.spawnRate;
-        Color accent = (rate == GamePanel.SpawnRate.FEW) ? UI.CYAN
-                     : (rate == GamePanel.SpawnRate.NORMAL) ? UI.GREEN : UI.ORANGE;
-
-        rowBackground(g, r, accent, hover(r));
-
-        g.setFont(UI.bold(15f));
-        g.setColor(Color.WHITE);
-        g.drawString("Spawn amount", r.x + 16, r.y + 26);
-
-        g.setFont(UI.bold(12f));
-        g.setColor(accent);
-        UI.right(g, "<   " + rate.name() + "   >", r.x + r.width - 16, r.y + 26);
-    }
-
-    private void toggleRow(Graphics2D g, Rectangle r, String label, boolean on) {
-
-        rowBackground(g, r, UI.CYAN, hover(r));
-
-        g.setFont(UI.bold(15f));
-        g.setColor(Color.WHITE);
-        g.drawString(label, r.x + 16, r.y + 28);
-
-        int sx = r.x + r.width - 64;
-        int sy = r.y + 11;
-
-        g.setColor(on ? UI.mix(UI.GREEN, UI.DARK, 0.15) : new Color(66, 72, 100));
-        g.fillRoundRect(sx, sy, 48, 22, 22, 22);
-        g.setColor(Color.WHITE);
-        g.fillOval(on ? sx + 28 : sx + 2, sy + 2, 18, 18);
-
-        g.setFont(UI.bold(11f));
-        g.setColor(on ? UI.GREEN : UI.MUTED);
-        UI.right(g, on ? "On" : "Off", sx - 10, r.y + 27);
     }
 
     // ===============================================================

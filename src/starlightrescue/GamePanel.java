@@ -154,6 +154,10 @@ public class GamePanel extends JPanel {
         SpawnRate next() {
             return values()[(ordinal() + 1) % values().length];
         }
+
+        SpawnRate previous() {
+            return values()[(ordinal() + values().length - 1) % values().length];
+        }
     }
 
     GameState currentState = GameState.OPENING;
@@ -186,11 +190,20 @@ public class GamePanel extends JPanel {
     static final Rectangle SELECT_BACK_BUTTON = new Rectangle(320, 500, 160, 40);
 
     // Settings
-    static final Rectangle SPAWN_BUTTON = new Rectangle(250, 318, 300, 40);
-    static final Rectangle SOUND_BUTTON = new Rectangle(250, 366, 300, 40);
-    static final Rectangle MUSIC_BUTTON = new Rectangle(250, 414, 300, 40);
-    static final Rectangle RESET_BUTTON = new Rectangle(250, 462, 300, 40);
-    static final Rectangle BACK_BUTTON = new Rectangle(300, 514, 200, 46);
+    // The settings screen: four cards (Gameplay, Audio, Controls, Save data)
+    static final Rectangle SPAWN_BUTTON = new Rectangle(60, 170, 310, 40);      // the spawn amount control
+    static final Rectangle[] SPAWN_SEGMENTS = new Rectangle[SpawnRate.values().length];   // FEW, NORMAL, MANY
+    static final Rectangle SOUND_BUTTON = new Rectangle(430, 112, 310, 56);
+    static final Rectangle MUSIC_BUTTON = new Rectangle(430, 174, 310, 56);
+    static final Rectangle RESET_BUTTON = new Rectangle(430, 448, 310, 44);
+    static final Rectangle BACK_BUTTON = new Rectangle(320, 532, 160, 40);
+
+    static {
+        int w = (SPAWN_BUTTON.width - 8) / SPAWN_SEGMENTS.length;
+        for (int i = 0; i < SPAWN_SEGMENTS.length; i++) {
+            SPAWN_SEGMENTS[i] = new Rectangle(SPAWN_BUTTON.x + 4 + i * w, SPAWN_BUTTON.y + 4, w, SPAWN_BUTTON.height - 8);
+        }
+    }
 
     // How to play: three tabs and a back button
     static final Rectangle[] HELP_TABS = {
@@ -1627,6 +1640,10 @@ public class GamePanel extends JPanel {
                     player.setMovingLeft(true);
                 } else if (currentState == GameState.INSTRUCTIONS) {
                     helpPage = Math.max(0, helpPage - 1);
+                } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() > 0) {
+                    spawnRate = spawnRate.previous();      // the arrow keys change the spawn amount (stopping at FEW)
+                    saveProgress();
+                    sound.play(SoundManager.Sfx.CLICK);
                 }
             });
             bind("released " + key, () -> player.setMovingLeft(false));
@@ -1638,6 +1655,10 @@ public class GamePanel extends JPanel {
                     player.setMovingRight(true);
                 } else if (currentState == GameState.INSTRUCTIONS) {
                     helpPage = Math.min(2, helpPage + 1);
+                } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() < SpawnRate.values().length - 1) {
+                    spawnRate = spawnRate.next();          // (stopping at MANY)
+                    saveProgress();
+                    sound.play(SoundManager.Sfx.CLICK);
                 }
             });
             bind("released " + key, () -> player.setMovingRight(false));
@@ -2027,9 +2048,13 @@ public class GamePanel extends JPanel {
 
             case SETTINGS:
                 if (SPAWN_BUTTON.contains(x, y)) {
-                    spawnRate = spawnRate.next();
-                    saveProgress();
-                    sound.play(SoundManager.Sfx.CLICK);
+                    // Click FEW, NORMAL or MANY to pick it
+                    for (int i = 0; i < SPAWN_SEGMENTS.length; i++) {
+                        if (SPAWN_SEGMENTS[i].contains(x, y)) {
+                            spawnRate = SpawnRate.values()[i];
+                            saveProgress();
+                        }
+                    }
                 } else if (SOUND_BUTTON.contains(x, y)) {
                     sound.setSoundOn(!sound.isSoundOn());
                 } else if (MUSIC_BUTTON.contains(x, y)) {
@@ -2165,7 +2190,8 @@ public class GamePanel extends JPanel {
             case DIFFICULTY_SELECT:
                 return new Rectangle[]{EASY_BUTTON, MODERATE_BUTTON, HARD_BUTTON, SELECT_BACK_BUTTON};
             case SETTINGS:
-                return new Rectangle[]{SPAWN_BUTTON, SOUND_BUTTON, MUSIC_BUTTON, RESET_BUTTON, BACK_BUTTON};
+                return new Rectangle[]{SPAWN_SEGMENTS[0], SPAWN_SEGMENTS[1], SPAWN_SEGMENTS[2],
+                                       SOUND_BUTTON, MUSIC_BUTTON, RESET_BUTTON, BACK_BUTTON};
             case INSTRUCTIONS:
                 return new Rectangle[]{HELP_TABS[0], HELP_TABS[1], HELP_TABS[2], HELP_BACK_BUTTON};
             case UPGRADE: {
