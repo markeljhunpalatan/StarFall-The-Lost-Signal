@@ -21,8 +21,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
 import java.util.Properties;
 import java.util.Random;
 import javax.imageio.ImageIO;
@@ -195,6 +198,15 @@ public class GamePanel extends JPanel {
     };
     static final Rectangle HELP_BACK_BUTTON = new Rectangle(320, 546, 160, 40);
 
+    /** The medals on the achievements screen: a grid of 5 x 4 tiles (they light up under the mouse). */
+    static final Rectangle[] ACHIEVEMENT_TILES = new Rectangle[Achievements.total()];
+
+    static {
+        for (int i = 0; i < ACHIEVEMENT_TILES.length; i++) {
+            ACHIEVEMENT_TILES[i] = new Rectangle(40 + (i % 5) * 146, 126 + (i / 5) * 102, 136, 96);
+        }
+    }
+
     // Hangar: one card per upgrade (each with BUY and SELL), undo, repair and launch
     static final Rectangle[] UPGRADE_CARDS = new Rectangle[Upgrades.TRACKS];
     static final Rectangle[] BUY_BUTTONS = new Rectangle[Upgrades.TRACKS];
@@ -327,6 +339,8 @@ public class GamePanel extends JPanel {
 
     final Achievements achievements = new Achievements();
     final ArrayDeque<Achievement> toasts = new ArrayDeque<>();   // achievements waiting for their pop-up
+    final transient Set<Achievement> newUnlocks = EnumSet.noneOf(Achievement.class);   // marked NEW until the achievements screen is left
+    GameState lastState = GameState.OPENING;
     Achievement currentToast = null;
     int toastTimer = 0;
 
@@ -547,13 +561,20 @@ public class GamePanel extends JPanel {
                 resetConfirmTimer--;
             }
 
-            // Achievement pop-ups play one after another
+            // Achievement pop-ups play one after another, each with a chime
             if (toastTimer > 0) {
                 toastTimer--;
             } else if (!toasts.isEmpty()) {
                 currentToast = toasts.poll();
                 toastTimer = TOAST_TICKS;
+                sound.play(SoundManager.Sfx.UPGRADE);
             }
+
+            // Medals stay marked NEW until the achievements screen has been seen and left
+            if (lastState == GameState.ACHIEVEMENTS && currentState != GameState.ACHIEVEMENTS) {
+                newUnlocks.clear();
+            }
+            lastState = currentState;
         }
 
         updateMusic();
@@ -1528,6 +1549,7 @@ public class GamePanel extends JPanel {
 
         if (achievements.unlock(achievement)) {
             toasts.add(achievement);
+            newUnlocks.add(achievement);
             saveProgress();
         }
     }
@@ -2133,8 +2155,11 @@ public class GamePanel extends JPanel {
         switch (currentState) {
             case MENU:
                 return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, ACHIEVEMENTS_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON};
-            case ACHIEVEMENTS:
-                return new Rectangle[]{HELP_BACK_BUTTON};
+            case ACHIEVEMENTS: {
+                Rectangle[] list = Arrays.copyOf(ACHIEVEMENT_TILES, ACHIEVEMENT_TILES.length + 1);
+                list[ACHIEVEMENT_TILES.length] = HELP_BACK_BUTTON;
+                return list;
+            }
             case MODE_SELECT:
                 return new Rectangle[]{HARDCORE_BUTTON, ADVENTURE_BUTTON, LEVEL_BUTTON, SELECT_BACK_BUTTON};
             case DIFFICULTY_SELECT:

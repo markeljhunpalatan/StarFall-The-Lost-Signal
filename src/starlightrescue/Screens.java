@@ -422,49 +422,199 @@ final class Screens {
     // ACHIEVEMENTS
     // ===============================================================
 
+    // ---------- Achievements: medals of bronze, silver and gold ----------
+
+    /** The colour of a medal tier. */
+    private static Color tierColor(Achievements.Tier tier) {
+        switch (tier) {
+            case GOLD:   return new Color(255, 207, 72);
+            case SILVER: return new Color(205, 215, 232);
+            default:     return new Color(220, 145, 78);
+        }
+    }
+
+    /**
+     * A medal: a six-sided badge in its tier's metal with the achievement's icon on it.
+     * A locked medal is dark steel with a padlock and only a ghost of the icon.
+     */
+    private void drawMedal(Graphics2D g, int cx, int cy, int r, Achievements.Achievement a, boolean unlocked, double shine) {
+
+        Color metal = tierColor(a.tier);
+        java.awt.geom.Path2D hex = new java.awt.geom.Path2D.Double();
+        java.awt.geom.Path2D inner = new java.awt.geom.Path2D.Double();
+        for (int k = 0; k < 6; k++) {
+            double ang = Math.PI / 6 + k * Math.PI / 3;
+            double hx = cx + Math.cos(ang) * r;
+            double hy = cy + Math.sin(ang) * r;
+            double ix = cx + Math.cos(ang) * r * 0.78;
+            double iy = cy + Math.sin(ang) * r * 0.78;
+            if (k == 0) {
+                hex.moveTo(hx, hy);
+                inner.moveTo(ix, iy);
+            } else {
+                hex.lineTo(hx, hy);
+                inner.lineTo(ix, iy);
+            }
+        }
+        hex.closePath();
+        inner.closePath();
+
+        if (unlocked) {
+            int glow = (int) (60 + 50 * shine);
+            g.setPaint(new RadialGradientPaint(new Point2D.Float(cx, cy), r * 1.9f, new float[]{0f, 1f},
+                new Color[]{UI.alpha(metal, glow), UI.alpha(metal, 0)}));
+            g.fill(new java.awt.geom.Ellipse2D.Float(cx - r * 1.9f, cy - r * 1.9f, r * 3.8f, r * 3.8f));
+
+            g.setPaint(new GradientPaint(cx, cy - r, UI.mix(metal, Color.WHITE, 0.45), cx, cy + r, UI.mix(metal, Color.BLACK, 0.45)));
+            g.fill(hex);
+            g.setPaint(new GradientPaint(cx, cy - r, UI.mix(metal, Color.BLACK, 0.35), cx, cy + r, UI.mix(metal, Color.WHITE, 0.15)));
+            g.fill(inner);
+            g.setStroke(new BasicStroke(1.4f));
+            g.setColor(UI.mix(metal, Color.WHITE, 0.6));
+            g.draw(hex);
+            UI.icon(g, a.icon, cx, cy, (int) (r * 0.85), new Color(36, 24, 12));
+            UI.icon(g, a.icon, cx, cy - 1, (int) (r * 0.85), UI.mix(metal, Color.WHITE, 0.75));
+
+        } else {
+            g.setColor(new Color(30, 34, 52));
+            g.fill(hex);
+            g.setStroke(new BasicStroke(1.4f));
+            g.setColor(new Color(80, 88, 116));
+            g.draw(hex);
+            UI.icon(g, a.icon, cx, cy, (int) (r * 0.85), new Color(70, 78, 104));
+
+            // A padlock over it
+            int lx = cx + r - 8;
+            int ly = cy + r - 10;
+            g.setColor(new Color(150, 158, 186));
+            g.setStroke(new BasicStroke(2f));
+            g.drawArc(lx - 4, ly - 7, 8, 9, 0, 180);
+            g.fillRoundRect(lx - 6, ly - 2, 12, 9, 3, 3);
+            g.setColor(new Color(30, 34, 52));
+            g.fillRect(lx - 1, ly + 1, 2, 3);
+        }
+        g.setStroke(new BasicStroke(1f));
+    }
+
     private void drawAchievements(Graphics2D g) {
 
+        Achievements progress = game.achievements;
+        int t = game.frame;
+
         g.setFont(UI.bold(28f));
-        UI.title(g, "Achievements", W / 2, 54, 1.5f, Color.WHITE, new Color(200, 220, 255), 0);
+        UI.title(g, "Achievements", W / 2, 52, 1.5f, Color.WHITE, new Color(200, 220, 255), 0);
 
-        g.setFont(UI.plain(13f));
+        // The summary: how far you are, your pilot score, and the medals of each tier
+        UI.glass(g, 40, 70, 720, 48, 16, UI.GOLD);
+        double done = progress.unlockedCount() / (double) Achievements.total();
+        g.setStroke(new BasicStroke(5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(new Color(255, 255, 255, 30));
+        g.drawOval(60, 76, 36, 36);
+        g.setColor(UI.GOLD);
+        g.drawArc(60, 76, 36, 36, 90, -(int) Math.round(360 * done));
+        g.setStroke(new BasicStroke(1f));
+        g.setFont(UI.bold(11f));
+        g.setColor(Color.WHITE);
+        UI.center(g, Math.round(done * 100) + "%", 78, 98);
+
+        g.setFont(UI.bold(15f));
+        g.setColor(Color.WHITE);
+        g.drawString(progress.unlockedCount() + " of " + Achievements.total() + " medals", 110, 92);
+        g.setFont(UI.plain(12f));
         g.setColor(UI.MUTED);
-        UI.center(g, game.achievements.unlockedCount() + " of " + Achievements.total() + " unlocked", W / 2, 84);
+        g.drawString("Pilot score  " + progress.points() + " / " + Achievements.maxPoints(), 110, 109);
 
-        UI.glass(g, 40, 96, 720, 440, 20, UI.GOLD);
+        Achievements.Tier[] tiers = Achievements.Tier.values();
+        for (int i = 0; i < tiers.length; i++) {
+            int mx = 470 + i * 96;
+            drawTierChip(g, mx, 94, tiers[i], progress.unlockedCount(tiers[i]), Achievements.count(tiers[i]));
+        }
 
+        // The medals
         Achievements.Achievement[] all = Achievements.Achievement.values();
 
         for (int i = 0; i < all.length; i++) {
 
             Achievements.Achievement a = all[i];
-            boolean unlocked = game.achievements.isUnlocked(a);
+            Rectangle r = GamePanel.ACHIEVEMENT_TILES[i];
+            boolean unlocked = progress.isUnlocked(a);
+            boolean hovered = hover(r);
+            boolean fresh = unlocked && game.newUnlocks.contains(a);
+            Color metal = tierColor(a.tier);
+            int lift = hovered ? -3 : 0;
 
-            int x = 56 + (i % 2) * 354;
-            int y = 104 + (i / 2) * 42;
+            Color border = unlocked ? metal : new Color(80, 88, 116);
+            UI.glass(g, r.x, r.y + lift, r.width, r.height, 14, hovered ? UI.mix(border, Color.WHITE, 0.35) : border);
+            if (hovered) {
+                g.setColor(UI.alpha(border, 40));
+                g.fillRoundRect(r.x, r.y + lift, r.width, r.height, 14, 14);
+            }
 
-            UI.glass(g, x, y, 332, 38, 12, unlocked ? UI.GOLD : new Color(90, 98, 130));
+            int cx = r.x + r.width / 2;
+            double shine = 0.5 + 0.5 * Math.sin(t * 0.08 + i);
+            drawMedal(g, cx, r.y + lift + 28, 19, a, unlocked, shine);
 
-            UI.icon(g, a.icon, x + 22, y + 19, 15, unlocked ? UI.GOLD : UI.MUTED);
+            // The tier and its points, in the corner
+            g.setFont(UI.bold(8.5f));
+            g.setColor(unlocked ? metal : UI.alpha(UI.MUTED, 170));
+            UI.right(g, "+" + a.tier.points, r.x + r.width - 9, r.y + lift + 15);
+            g.drawString(a.tier.title.toUpperCase(), r.x + 9, r.y + lift + 15);
 
-            g.setFont(UI.bold(13f));
-            g.setColor(unlocked ? Color.WHITE : UI.MUTED);
-            g.drawString(a.title, x + 40, y + 16);
+            if (fresh && (t / 15) % 2 == 0) {
+                g.setColor(UI.GREEN);
+                g.fillRoundRect(r.x + r.width - 38, r.y + lift + 22, 30, 13, 8, 8);
+                g.setFont(UI.bold(8.5f));
+                g.setColor(UI.DARK);
+                UI.center(g, "NEW", r.x + r.width - 23, r.y + lift + 32);
+            }
 
-            g.setFont(UI.plain(11f));
-            g.setColor(unlocked ? UI.TEXT : UI.MUTED);
-            UI.fit(g, a.description, false, 11f, 332 - 40 - 80);
-            g.drawString(a.description, x + 40, y + 31);
+            g.setFont(UI.bold(12f));
+            g.setColor(unlocked ? Color.WHITE : UI.TEXT);
+            UI.fit(g, a.title, true, 12f, r.width - 12);
+            UI.center(g, a.title, cx, r.y + lift + 62);
 
-            g.setFont(UI.bold(9f));
-            g.setColor(unlocked ? UI.GREEN : UI.MUTED);
-            UI.right(g, unlocked ? "UNLOCKED" : "LOCKED", x + 332 - 12, y + 16);
+            g.setFont(UI.plain(10f));
+            g.setColor(unlocked ? UI.mix(metal, Color.WHITE, 0.55) : UI.MUTED);
+            List<String> lines = wrap(g, a.description, r.width - 14);
+            for (int k = 0; k < Math.min(2, lines.size()); k++) {
+                String line = lines.get(k) + ((k == 1 && lines.size() > 2) ? "..." : "");
+                UI.center(g, line, cx, r.y + lift + 76 + k * 12);
+            }
         }
 
         UI.button(g, GamePanel.HELP_BACK_BUTTON, "BACK", UI.VIOLET, hover(GamePanel.HELP_BACK_BUTTON), true, game.frame);
     }
 
-    /** The pop-up that slides in when an achievement unlocks (drawn over every screen). */
+    /** A small medal and "unlocked / total" for one tier, in the summary strip. */
+    private void drawTierChip(Graphics2D g, int x, int cy, Achievements.Tier tier, int got, int of) {
+
+        Color metal = tierColor(tier);
+        java.awt.geom.Path2D hex = new java.awt.geom.Path2D.Double();
+        for (int k = 0; k < 6; k++) {
+            double ang = Math.PI / 6 + k * Math.PI / 3;
+            if (k == 0) {
+                hex.moveTo(x + Math.cos(ang) * 10, cy + Math.sin(ang) * 10);
+            } else {
+                hex.lineTo(x + Math.cos(ang) * 10, cy + Math.sin(ang) * 10);
+            }
+        }
+        hex.closePath();
+        g.setPaint(new GradientPaint(x, cy - 10, UI.mix(metal, Color.WHITE, 0.4), x, cy + 10, UI.mix(metal, Color.BLACK, 0.4)));
+        g.fill(hex);
+
+        g.setFont(UI.bold(13f));
+        g.setColor(Color.WHITE);
+        g.drawString(got + "/" + of, x + 16, cy - 1);
+        g.setFont(UI.plain(10f));
+        g.setColor(metal);
+        g.drawString(tier.title, x + 16, cy + 12);
+    }
+
+    /**
+     * The pop-up when an achievement unlocks (drawn over every screen): a medal card that
+     * slides in at the bottom right, with a sparkle burst round the medal and a shine
+     * sweeping across, then slides away.
+     */
     private void drawAchievementToast(Graphics2D g) {
 
         if (game.toastTimer <= 0 || game.currentToast == null) {
@@ -472,26 +622,68 @@ final class Screens {
         }
 
         Achievements.Achievement a = game.currentToast;
+        Color metal = tierColor(a.tier);
+        int age = GamePanel.TOAST_TICKS - game.toastTimer;
 
-        // Fades in as it arrives and out as it leaves. The whole pop-up fades, box included.
-        float fade = Math.min(1f, Math.min(game.toastTimer / 30f, (GamePanel.TOAST_TICKS - game.toastTimer) / 20f));
+        double in = ease(Math.min(1.0, age / 16.0));
+        double out = ease(Math.min(1.0, game.toastTimer / 16.0));
+        double shown = Math.min(in, out);
+
+        int w = 340;
+        int h = 72;
+        int x = (int) Math.round(W + 4 - (w + 14) * shown);
+        int y = 458;
 
         Graphics2D t = (Graphics2D) g.create();
-        t.setComposite(AlphaComposite.SrcOver.derive(Math.max(0f, fade)));
+        UI.glass(t, x, y, w, h, 18, metal);
 
-        UI.glass(t, 230, 88, 340, 50, 16, UI.GOLD);
+        // The shine sweeping across the card
+        if (age > 14 && age < 60) {
+            Graphics2D s2 = (Graphics2D) t.create();
+            s2.clip(new java.awt.geom.RoundRectangle2D.Double(x, y, w, h, 18, 18));
+            double sweep = (age - 14) / 46.0;
+            int sx = (int) (x - 80 + sweep * (w + 160));
+            s2.setPaint(new GradientPaint(sx - 40, y, new Color(255, 255, 255, 0), sx, y, new Color(255, 255, 255, 70), true));
+            s2.fillPolygon(new int[]{sx - 40, sx + 10, sx + 50, sx}, new int[]{y + h, y, y, y + h}, 4);
+            s2.dispose();
+        }
 
-        UI.icon(t, a.icon, 258, 113, 18, UI.GOLD);
+        // The medal, with sparkles bursting out of it as it arrives
+        int mx = x + 40;
+        int my = y + h / 2;
+        drawMedal(t, mx, my, 24, a, true, 0.5 + 0.5 * Math.sin(age * 0.2));
+        if (age < 34) {
+            double burst = age / 34.0;
+            t.setColor(UI.alpha(UI.mix(metal, Color.WHITE, 0.5), (int) (230 * (1 - burst))));
+            for (int k = 0; k < 10; k++) {
+                double ang = k * Math.PI / 5 + 0.3;
+                double d = 26 + burst * 30;
+                int px = (int) (mx + Math.cos(ang) * d);
+                int py = (int) (my + Math.sin(ang) * d);
+                t.fillRect(px - 1, py - 1, 3, 3);
+            }
+        }
 
         t.setFont(UI.bold(10f));
-        t.setColor(UI.GOLD);
-        t.drawString("ACHIEVEMENT UNLOCKED", 282, 104);
+        t.setColor(metal);
+        UI.trackedLeft(t, "ACHIEVEMENT UNLOCKED", x + 76, y + 20, 1.2f);
+        t.setFont(UI.bold(10f));
+        UI.right(t, a.tier.title.toUpperCase() + "  +" + a.tier.points, x + w - 14, y + 20);
 
-        t.setFont(UI.bold(14f));
+        t.setFont(UI.bold(16f));
         t.setColor(Color.WHITE);
-        t.drawString(a.title, 282, 124);
+        t.drawString(a.title, x + 76, y + 42);
+
+        t.setColor(UI.TEXT);
+        UI.fit(t, a.description, false, 11f, w - 76 - 14);
+        t.drawString(a.description, x + 76, y + 59);
 
         t.dispose();
+    }
+
+    private static double ease(double v) {
+        v = Math.max(0, Math.min(1, v));
+        return v * v * (3 - 2 * v);
     }
 
     private void menuButton(Graphics2D g, Rectangle r, UI.Icon icon, String label, String extra, Color accent) {
