@@ -8,7 +8,8 @@ import java.awt.RenderingHints;
 
 /**
  * A hired wingman. It flies just in front of the player, shoots at aliens and
- * can be shot down.
+ * can be shot down. It looks like the "Void - Main Ship" (see AllyArt): its hull
+ * gets more battered as it is damaged, and its two wing cannons take turns firing.
  *
  * Allies are disposable:
  *   - they CANNOT be healed. Nothing in the game adds health to an ally: repair
@@ -20,8 +21,8 @@ import java.awt.RenderingHints;
 public class Ally {
 
     static final int MAX_HEALTH = 100;
-    static final int WIDTH = 40;
-    static final int HEIGHT = 26;
+    static final int WIDTH = (int) Math.round(26 * AllyArt.SCALE);     // the hull of its ship: 26 x 30 sheet pixels
+    static final int HEIGHT = (int) Math.round(30 * AllyArt.SCALE);
 
     static final int SHOT_INTERVAL = 16;   // ticks between shots
     static final int SHOT_DAMAGE = 8;      // damage of each shot
@@ -35,6 +36,9 @@ public class Ally {
     private int shotCooldown = 0;
     private int hitCooldown = 0;
     private int tick = 0;
+    private int sinceShot = 99;         // ticks since its cannons last fired (they kick back, then settle)
+    private boolean topGun = false;     // which wing cannon fired last
+    private boolean racing = false;     // true while it races to keep up (its engine roars)
 
     public Ally(int playerCenterX, int playerCenterY) {
         x = playerCenterX + FOLLOW_GAP;
@@ -49,10 +53,14 @@ public class Ally {
     public boolean update(int playerCenterX, int playerCenterY) {
 
         tick++;
+        sinceShot++;
 
         if (hitCooldown > 0) {
             hitCooldown--;
         }
+
+        double oldX = x;
+        double oldY = y;
 
         // Glide toward its spot, so it looks like it is flying alongside you
         x += (playerCenterX + FOLLOW_GAP - x) * 0.15;
@@ -62,12 +70,17 @@ public class Ally {
         // The ship can fly to the right edge, so the wingman must stay on screen too
         x = Math.min(GamePanel.SCREEN_WIDTH - WIDTH - 2, x);
 
+        racing = Math.abs(x - oldX) > 1.6 || Math.abs(y - oldY) > 2.5;
+
         if (shotCooldown > 0) {
             shotCooldown--;
             return false;
         }
 
+        // The two wing cannons take turns
         shotCooldown = SHOT_INTERVAL;
+        topGun = !topGun;
+        sinceShot = 0;
         return true;
     }
 
@@ -99,13 +112,18 @@ public class Ally {
         return health;
     }
 
-    /** Where a shot leaves the ally's gun. */
+    /** Where a shot leaves the wing cannon that just fired. */
     public int getGunX() {
-        return (int) Math.round(x) + WIDTH;
+        return (int) Math.round(x) + AllyArt.GUN_X;
     }
 
     public int getGunY() {
-        return (int) Math.round(y) + HEIGHT / 2;
+        return (int) Math.round(y) + (topGun ? AllyArt.TOP_GUN_Y : AllyArt.BOTTOM_GUN_Y);
+    }
+
+    /** True while it races to keep up with you (its engine roars). */
+    public boolean isRacing() {
+        return racing;
     }
 
     public int getCenterX() {
@@ -116,9 +134,12 @@ public class Ally {
         return (int) Math.round(y) + HEIGHT / 2;
     }
 
-    /** A slightly smaller hitbox than the drawing, like the player's ship. */
+    /**
+     * A smaller hitbox than the drawing, like the player's ship: the core of the hull
+     * (the wing tips and cannons stick out past it), so it is about as easy to hit as before.
+     */
     public Rectangle getBounds() {
-        return new Rectangle((int) Math.round(x) + 3, (int) Math.round(y) + 4, WIDTH - 6, HEIGHT - 8);
+        return new Rectangle((int) Math.round(x) + 5, (int) Math.round(y) + 9, WIDTH - 10, HEIGHT - 18);
     }
 
     public void draw(Graphics2D g0) {
@@ -129,6 +150,15 @@ public class Ally {
         int ix = (int) Math.round(x);
         int iy = (int) Math.round(y);
         boolean flashing = hitCooldown > 0;
+        double fraction = health / (double) MAX_HEALTH;
+
+        // The ship from the "Void - Main Ship" parts; the plain shapes below are only for missing art
+        int cannonFrame = (sinceShot < AllyArt.CANNON_FRAMES * 2) ? sinceShot / 2 : 0;
+        if (AllyArt.draw(g, ix, iy, tick, fraction, cannonFrame, racing, hitCooldown, hitCooldown > HIT_COOLDOWN - 4)) {
+            drawHealthBar(g, ix, iy, fraction);
+            g.dispose();
+            return;
+        }
 
         // Engine flame, flickering behind the ship
         int flame = 6 + (tick / 2) % 3 * 3;
@@ -160,15 +190,18 @@ public class Ally {
         g.setColor(Color.WHITE);
         g.fillRect(ix + WIDTH - 2, iy + HEIGHT / 2 - 1, 3, 3);
 
-        // Health bar above the ship (it never refills)
-        double fraction = health / (double) MAX_HEALTH;
+        drawHealthBar(g, ix, iy, fraction);
+        g.dispose();
+    }
+
+    /** Its health bar, above the ship (it never refills). */
+    private void drawHealthBar(Graphics2D g, int ix, int iy, double fraction) {
+
         Color bar = (fraction > 0.5) ? UI.GREEN : (fraction > 0.25 ? UI.GOLD : UI.RED);
 
         g.setColor(new Color(0, 0, 0, 150));
         g.fillRect(ix, iy - 8, WIDTH, 4);
         g.setColor(bar);
         g.fillRect(ix, iy - 8, (int) Math.round(WIDTH * fraction), 4);
-
-        g.dispose();
     }
 }

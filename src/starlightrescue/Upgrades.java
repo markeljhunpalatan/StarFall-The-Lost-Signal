@@ -64,7 +64,10 @@ public class Upgrades {
 
     private final int[] level = START.clone();
     private int credits = 0;
-    private int xp = 0;                 // experience: earned by playing, it sets your player level
+    private int xp = 0;                 // experience: earned by playing, it fills the level bar
+    private int playerLevel = 1;        // goes up once the level bar is full AND the level's quest is done
+    private MaxWeapon maxWeapon = MaxWeapon.OMEGA_CANNON;   // the player's pick, once CANNONS is fully upgraded
+    private int questProgress = 0;      // how far through the current level's quest (see Quest)
 
     /** A ready-made ship, used by LEVEL mode so every difficulty has a fixed loadout. */
     public static Upgrades preset(int cannons, int ammo, int engines, int hull) {
@@ -115,11 +118,26 @@ public class Upgrades {
     // ---------- Effects ----------
 
     public int getWeaponLevel()      { return Math.min(level[CANNONS], PHASE1[CANNONS]); }
-    /** CANNONS fully upgraded: the omega volley (all four guns at once). */
-    public boolean omegaVolley() { return isMaxed(CANNONS); }
+    /** CANNONS fully upgraded: the max weapons are unlocked (see MaxWeapon). */
+    public boolean maxWeaponReady() { return isMaxed(CANNONS); }
 
-    /** Shots in one volley: seven for the omega volley, otherwise the weapon's own count. */
-    public int getBulletsPerVolley() { return omegaVolley() ? 7 : Weapon.forLevel(getWeaponLevel()).volleys; }
+    /** The max weapon the player has picked (it is used once CANNONS is fully upgraded). */
+    public MaxWeapon getMaxWeapon() { return maxWeapon; }
+    public void setMaxWeapon(MaxWeapon weapon) { maxWeapon = (weapon == null) ? MaxWeapon.OMEGA_CANNON : weapon; }
+
+    /** Switches to the next max weapon and returns it. */
+    public MaxWeapon cycleMaxWeapon() {
+        maxWeapon = maxWeapon.next();
+        return maxWeapon;
+    }
+
+    /** Shots in one volley: the max weapon's own count once CANNONS is maxed, otherwise the gun's. */
+    public int getBulletsPerVolley() {
+        if (maxWeaponReady()) {
+            return (maxWeapon == MaxWeapon.NOVA_SWARM) ? Weapon.NOVA.volleys : 1;
+        }
+        return Weapon.forLevel(getWeaponLevel()).volleys;
+    }
     public int getCaliberLevel()     { return phase2Level(CANNONS); }
 
     /** The extra damage the CANNONS MK II upgrade adds to each shot at this caliber level. */
@@ -127,12 +145,20 @@ public class Upgrades {
         return CALIBER_BONUS[Math.max(0, Math.min(CALIBER_BONUS.length - 1, caliberLevel))];
     }
     public int getBulletDamage() {
-        if (omegaVolley()) {
-            // Average damage of the seven shots of the omega volley
-            int total = Weapon.PLASMA.damage + 2 * Weapon.ARC.damage + Weapon.FIREBALL.damage + 3 * Weapon.COMET.damage;
-            return total / 7 + CALIBER_BONUS[getCaliberLevel()];
+        if (maxWeaponReady()) {
+            switch (maxWeapon) {
+                case NOVA_SWARM:     return Weapon.NOVA.damage + CALIBER_BONUS[getCaliberLevel()];
+                case STARFALL_LANCE: return lanceDamage(1.0, getCaliberLevel());
+                default:             return Weapon.OMEGA.damage + CALIBER_BONUS[getCaliberLevel()];
+            }
         }
         return bulletDamageFor(getWeaponLevel());
+    }
+
+    /** The Starfall Lance's damage for a charge from 0.0 to 1.0 (the caliber adds five times its bonus). */
+    public static int lanceDamage(double power, int caliberLevel) {
+        double charge = Math.max(0, Math.min(1, power));
+        return (int) Math.round(45 + 225 * charge) + 5 * CALIBER_BONUS[Math.max(0, Math.min(CALIBER_BONUS.length - 1, caliberLevel))];
     }
 
     /** Damage per bullet when firing a given pattern (1 - 4). */
@@ -216,7 +242,7 @@ public class Upgrades {
         return canAfford(track) && levelMet(track);
     }
 
-    // ---------- Player level (from experience) ----------
+    // ---------- Player level (experience, then the level's quest) ----------
 
     /** The player level each purchase step needs (same order as COSTS). */
     private static final int[][] LEVEL_NEEDED = {
@@ -235,12 +261,18 @@ public class Upgrades {
         return xp;
     }
 
+    /** Adds experience. It fills the level bar; the level itself goes up in tryLevelUp(). */
     public void addXp(int amount) {
         xp = Math.max(0, xp + amount);
     }
 
-    /** Your player level (1 - 10), from the experience you have earned in this mode. */
+    /** Your player level in this mode (1 - 10). */
     public int playerLevel() {
+        return playerLevel;
+    }
+
+    /** The level this much experience would give with no quests (used for saves made before quests). */
+    static int levelForXp(int xp) {
 
         int lvl = 1;
 
@@ -253,16 +285,99 @@ public class Upgrades {
         return lvl;
     }
 
-    /** Experience still needed for the next player level (0 at the top level). */
+    public boolean isTopLevel() {
+        return playerLevel >= MAX_PLAYER_LEVEL;
+    }
+
+    /** Experience still needed to fill the level bar (0 once it is full, and at the top level). */
     public int xpToNextLevel() {
+        return isTopLevel() ? 0 : Math.max(0, LEVEL_XP[playerLevel] - xp);
+    }
 
-        int lvl = playerLevel();
+    /** How full the level bar is: 0.0 just after levelling up, 1.0 once the next level's XP is earned. */
+    public double levelProgress() {
 
-        if (lvl >= MAX_PLAYER_LEVEL) {
-            return 0;
+        if (isTopLevel()) {
+            return 1.0;
         }
 
-        return LEVEL_XP[lvl] - xp;
+        int from = LEVEL_XP[playerLevel - 1];
+        int to = LEVEL_XP[playerLevel];
+        return Math.max(0.0, Math.min(1.0, (xp - from) / (double) (to - from)));
+    }
+
+    /** True once the XP for the next level is earned (the quest may still be needed). */
+    public boolean xpFull() {
+        return !isTopLevel() && xp >= LEVEL_XP[playerLevel];
+    }
+
+    // ---------- The level's quest ----------
+
+    /** The quest to finish at this level, or null at the top level. */
+    public Quest currentQuest() {
+        return Quest.forLevel(playerLevel);
+    }
+
+    public int getQuestProgress() {
+        return questProgress;
+    }
+
+    public boolean questDone() {
+        Quest quest = currentQuest();
+        return quest != null && questProgress >= quest.target;
+    }
+
+    /**
+     * Something happened that a quest may count. Returns true if it just finished the quest.
+     * (A streak counts the aliens destroyed since you last lost a life.)
+     */
+    public boolean questEvent(Quest.Goal goal, int amount) {
+
+        Quest quest = currentQuest();
+
+        if (quest == null || quest.goal != goal || questDone()) {
+            return false;
+        }
+
+        questProgress = Math.min(quest.target, questProgress + amount);
+        return questDone();
+    }
+
+    /** You lost a life: an unfinished streak starts again from zero. */
+    public void breakStreak() {
+
+        Quest quest = currentQuest();
+
+        if (quest != null && quest.goal == Quest.Goal.STREAK && !questDone()) {
+            questProgress = 0;
+        }
+    }
+
+    /** Goes up a level if the level bar is full and the quest is done. Returns true if it did. */
+    public boolean tryLevelUp() {
+
+        if (!xpFull() || !questDone()) {
+            return false;
+        }
+
+        playerLevel++;
+        questProgress = 0;
+        return true;
+    }
+
+    /**
+     * Adds experience and takes every level it pays for, skipping the quests.
+     * For tests and for setting up a ship quickly; the game itself uses addXp().
+     */
+    void addXpSkippingQuests(int amount) {
+
+        addXp(amount);
+        int reached = Math.max(playerLevel, levelForXp(xp));
+
+        if (reached != playerLevel) {
+            playerLevel = reached;
+            questProgress = 0;
+        }
     }
 
     /** The player level the next step of a track needs (0 once the track is maxed). */
@@ -337,6 +452,9 @@ public class Upgrades {
 
         data.setProperty(prefix + "wallet", String.valueOf(credits));
         data.setProperty(prefix + "xp", String.valueOf(xp));
+        data.setProperty(prefix + "level", String.valueOf(playerLevel));
+        data.setProperty(prefix + "quest", String.valueOf(questProgress));
+        data.setProperty(prefix + "maxweapon", maxWeapon.name());
 
         for (int t = 0; t < TRACKS; t++) {
             data.setProperty(prefix + "upgrade." + KEYS[t], String.valueOf(level[t]));
@@ -348,6 +466,12 @@ public class Upgrades {
 
         credits = parse(data.getProperty(prefix + "wallet"), 0);
         xp = parse(data.getProperty(prefix + "xp"), 0);
+
+        // A save from before quests has no level: it keeps the level its XP had already earned
+        int savedLevel = parse(data.getProperty(prefix + "level"), levelForXp(xp));
+        playerLevel = Math.max(1, Math.min(MAX_PLAYER_LEVEL, savedLevel));
+        questProgress = parse(data.getProperty(prefix + "quest"), 0);
+        maxWeapon = MaxWeapon.parse(data.getProperty(prefix + "maxweapon"));
 
         for (int t = 0; t < TRACKS; t++) {
             level[t] = clamp(t, parse(data.getProperty(prefix + "upgrade." + KEYS[t]), START[t]));
@@ -398,6 +522,9 @@ public class Upgrades {
 
         credits = 0;
         xp = 0;
+        playerLevel = 1;
+        questProgress = 0;
+        maxWeapon = MaxWeapon.OMEGA_CANNON;
 
         for (int t = 0; t < TRACKS; t++) {
             level[t] = START[t];
@@ -427,7 +554,10 @@ public class Upgrades {
                     return Weapon.forLevel(p1).title + ", " + Weapon.forLevel(p1).damage + " damage each";
                 }
                 if (p2 >= 3) {
-                    return "Omega volley: all four guns fire together";
+                    if (lvl > level[track]) {
+                        return "Unlocks 3 max weapons to choose from";
+                    }
+                    return "Max weapon: " + maxWeapon.title + " (" + maxWeapon.tag + ")";
                 }
                 return "+" + CALIBER_BONUS[p2] + " damage per bullet";
 
@@ -460,6 +590,9 @@ public class Upgrades {
     }
 
     public String nextText(int track) {
+        if (track == CANNONS && isMaxed(track)) {
+            return "SWITCH (or C) for the " + maxWeapon.next().title;
+        }
         return isMaxed(track) ? "Fully upgraded" : describe(track, level[track] + 1);
     }
 }

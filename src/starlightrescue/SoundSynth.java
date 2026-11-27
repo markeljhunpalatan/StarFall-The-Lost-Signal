@@ -138,12 +138,7 @@ final class SoundSynth {
                 return finish(b, 0.30);
 
             case LASER:
-                b = buf(0.8);
-                tone(b, 0.0, 0.75, 180, 150, Wave.SAW, 1.0, 0.005, 0.6);
-                tone(b, 0.0, 0.75, 362, 300, Wave.SQUARE, 0.5, 0.005, 0.6);
-                noise(b, 0.0, 0.75, 0.6, 0.8, 0.7, 0.4);
-                smooth(b, 0.4f);
-                return finish(b, 0.40);
+                return finish(laserZap(1.0), LASER_LEVEL);
 
             case MISSILE:
                 b = buf(0.45);
@@ -217,9 +212,9 @@ final class SoundSynth {
     // BOSS SOUNDS (each boss has its own voice)
     // ===============================================================
 
-    // Each boss's voice: 0 Vanguard, 1 Warship, 2 Mothership, 3 Dreadnought, 4 Hive Queen, 5 Golem
-    private static final double[] BOSS_PITCH = {1.25, 0.8, 0.6, 0.95, 1.5, 0.5};
-    private static final Wave[] BOSS_WAVE = {Wave.SAW, Wave.SQUARE, Wave.SINE, Wave.SQUARE, Wave.SAW, Wave.TRI};
+    // Each boss's voice: 0 Vanguard, 1 Warship, 2 Mothership, 3 Dreadnought, 4 Hive Queen, 5 Golem, 6 Executioner
+    private static final double[] BOSS_PITCH = {1.25, 0.8, 0.6, 0.95, 1.5, 0.5, 0.85};
+    private static final Wave[] BOSS_WAVE = {Wave.SAW, Wave.SQUARE, Wave.SINE, Wave.SQUARE, Wave.SAW, Wave.TRI, Wave.SINE};
 
     /**
      * A boss's own version of a sound effect. The shape and loudness follow the normal
@@ -273,12 +268,13 @@ final class SoundSynth {
                 break;
 
             case LASER:
-                b = buf(0.8);
-                tone(b, 0.0, 0.75, 180 * p, 150 * p, w, 1.0, 0.005, 0.6);
-                tone(b, 0.0, 0.75, 362 * p, 300 * p, Wave.SQUARE, 0.5, 0.005, 0.6);
-                noise(b, 0.0, 0.75, 0.6, 0.8, 0.7, 0.4);
-                smooth(b, 0.4f);
-                level = 0.40;
+                // A boss beam: a heavy boom as it fires, then a warbling energy beam with a bright sizzle
+                b = buf(0.85);
+                tone(b, 0, 0.3, 160 * p, 45 * p, Wave.SINE, 1.0, 0.001, 1.6);
+                warble(b, 0, 0.85, 700 * p, 0.55);
+                warble(b, 0, 0.85, 1400 * p, 0.22);
+                noise(b, 0, 0.85, 0.35, 0.7, 1.0, 0.9);
+                level = 0.38;
                 break;
 
             case MISSILE:
@@ -318,6 +314,24 @@ final class SoundSynth {
         return finish(b, level);
     }
 
+    /** An energy beam: a bright tone that warbles fast (24 times a second), fading out at the end. */
+    private static void warble(float[] b, double start, double dur, double f, double vol) {
+
+        int first = (int) (start * RATE);
+        int count = (int) (dur * RATE);
+        double phase = 0;
+
+        for (int i = 0; i < count; i++) {
+            double t = (double) i / count;
+            double seconds = (double) i / RATE;
+            phase += f * (1.0 + 0.04 * Math.sin(2 * Math.PI * 24 * seconds)) / RATE;
+            double p = phase - Math.floor(phase);
+            double v = 4.0 * Math.abs(p - 0.5) - 1.0 + 0.35 * (2.0 * p - 1.0);   // a triangle with some saw bite
+            double envelope = Math.min(1.0, seconds / 0.01) * Math.pow(1 - t, 0.7);
+            b[Math.floorMod(first + i, b.length)] += (float) (v * envelope * vol);
+        }
+    }
+
     /** Each boss's signature, added on top of its sounds. */
     private static void voice(float[] b, int design, double pitch) {
 
@@ -354,11 +368,20 @@ final class SoundSynth {
                 noise(b, 0, Math.min(0.08, seconds), 0.3, 2.0, 1.0, 1.0);
                 break;
 
-            default:
+            case 5:
                 // Mecha-stone Golem: a low rumble of grinding stone, a crunch of rock and a heavy thud
                 noise(b, 0, seconds, 0.5, 0.6, 0.05, 0.03);
                 noise(b, 0, Math.min(0.06, seconds), 0.7, 2.5, 0.5, 0.2);
                 tone(b, 0, Math.min(0.25, seconds), 70, 40, Wave.SINE, 0.45, 0.002, 2.0);
+                break;
+
+            default:
+                // Undead Executioner: a tolling funeral bell and a ghostly whisper
+                tone(b, 0, Math.min(1.2, seconds), 196, 196, Wave.SINE, 0.35, 0.002, 1.4);
+                tone(b, 0, Math.min(0.9, seconds), 196 * 2.4, 196 * 2.4, Wave.SINE, 0.16, 0.002, 1.8);
+                tone(b, 0, Math.min(0.6, seconds), 196 * 5.95, 196 * 5.95, Wave.SINE, 0.07, 0.002, 2.2);
+                noise(b, 0, seconds, 0.22, 0.8, 0.9, 0.6);
+                stutter(b, 7, 0.3);
                 break;
         }
     }
@@ -366,6 +389,24 @@ final class SoundSynth {
     // ===============================================================
     // SHOTS (one sound for each gun, changed by the ship and its condition)
     // ===============================================================
+
+    private static final double LASER_LEVEL = 0.32;
+
+    /**
+     * One pulse of the laser beam: a bright zap that sweeps down with a sparkle an octave
+     * above, a low hum under it and an electric crackle. It is short (0.24 s), about as
+     * long as the gap between pulses, so the pulses stay crisp instead of blurring together.
+     */
+    private static float[] laserZap(double pitch) {
+
+        float[] b = buf(0.24);
+        tone(b, 0, 0.22, 2200 * pitch, 520 * pitch, Wave.SAW, 0.55, 0.001, 1.4);     // the zap
+        tone(b, 0, 0.18, 4400 * pitch, 1040 * pitch, Wave.SINE, 0.30, 0.001, 1.8);   // the sparkle
+        tone(b, 0, 0.24, 240 * pitch, 180 * pitch, Wave.SQUARE, 0.20, 0.004, 1.0);   // the hum
+        noise(b, 0, 0.06, 0.35, 2.0, 1.0, 0.8);                                      // the crack at the start
+        stutter(b, 55, 0.35);                                                        // the electric crackle
+        return b;
+    }
 
     /**
      * The sound of one shot (see ShotSound). The gun gives the shape. Then the ship's
@@ -413,12 +454,34 @@ final class SoundSynth {
                 break;
 
             case BEAM:
-                b = buf(0.8);
-                tone(b, 0.0, 0.75, 180 * pitch, 150 * pitch, Wave.SAW, 1.0, 0.005, 0.6);
-                tone(b, 0.0, 0.75, 362 * pitch, 300 * pitch, Wave.SQUARE, 0.5, 0.005, 0.6);
-                noise(b, 0.0, 0.75, 0.6, 0.8, 0.7, 0.4);
-                smooth(b, 0.4f);
-                level = 0.40;
+                b = laserZap(pitch);
+                level = LASER_LEVEL;
+                break;
+
+            case NOVA:
+                // The Nova Swarm: a bright sparkling chime as five stars fly out
+                b = buf(0.3);
+                tone(b, 0, 0.28, 1568 * pitch, 2093 * pitch, Wave.SINE, 0.7, 0.002, 1.6);
+                tone(b, 0.03, 0.24, 2637 * pitch, 2637 * pitch, Wave.SINE, 0.4, 0.002, 2.0);
+                tone(b, 0.06, 0.2, 3136 * pitch, 3520 * pitch, Wave.TRI, 0.25, 0.002, 2.2);
+                noise(b, 0, 0.05, 0.25, 2.0, 1.0, 1.0);
+                level = 0.24;
+                break;
+
+            case LANCE:
+                // The Starfall Lance: a heavy boom, then a bright beam sweeping down with a sizzle
+                b = buf(0.75);
+                tone(b, 0, 0.4, 150 * pitch, 38 * pitch, Wave.SINE, 1.0, 0.002, 1.4);
+                tone(b, 0, 0.55, 2400 * pitch, 320 * pitch, Wave.SAW, 0.55, 0.002, 1.2);
+                tone(b, 0, 0.7, 330 * pitch, 260 * pitch, Wave.SQUARE, 0.3, 0.01, 0.9);
+                noise(b, 0, 0.7, 0.45, 0.9, 1.0, 0.5);
+                level = 0.44;
+                break;
+
+            case CANNON_BEAM:
+                // The built-in laser cannon: the same zap, higher and lighter (its guns are firing too)
+                b = laserZap(pitch * 1.25);
+                level = LASER_LEVEL * 0.6;
                 break;
 
             default:   // PLASMA: the original shot
@@ -467,8 +530,8 @@ final class SoundSynth {
     /**
      * The music for each track: the epic theme for the opening, story and ending, the
      * retro synthwave theme for the menus, the calm track for Easy LEVEL missions, the
-     * battle track for Moderate, the boss track for Hard, and one track each for
-     * Adventure and Hardcore.
+     * battle track for Moderate, the boss track for Hard, one track for each Adventure
+     * mission, and one for Hardcore.
      */
     static short[] music(SoundManager.Track track) {
 
@@ -477,8 +540,14 @@ final class SoundSynth {
                 return synthOpening();
             case MENU:
                 return synthMenu();
-            case ADVENTURE:
-                return synthAdventure();
+            case EARTH_DEFENSE:
+                return synthEarthDefense();
+            case DEEP_SPACE:
+                return synthDeepSpace();
+            case MOTHERSHIP:
+                return synthMothership();
+            case WORMHOLE:
+                return synthWormhole();
             case HARDCORE:
                 return synthHardcore();
             case BOSS_FIGHT:
@@ -612,8 +681,8 @@ final class SoundSynth {
         return finish(b, 0.42);
     }
 
-    /** Heroic and wide for Adventure: slow brass-like lead over warm pads, with a steady beat and space echoes. */
-    private static short[] synthAdventure() {
+    /** Mission 1, Earth Defense: heroic and wide. A slow brass-like lead over warm pads, with a steady beat and space echoes. */
+    private static short[] synthEarthDefense() {
 
         double beat = 60.0 / 96;
         double bar = beat * 4;
@@ -658,6 +727,239 @@ final class SoundSynth {
 
         echo(b, beat * 0.5, 0.3, 2);
         return finish(b, 0.4);
+    }
+
+    /**
+     * Mission 2, Deep-space Pursuit: a tense chase into the dark. A pulsing octave bass, a
+     * plucked arpeggio that echoes away, a driving four-on-the-floor beat, and the lost
+     * signal's three-note call in a gliding lead.
+     */
+    private static short[] synthDeepSpace() {
+
+        double beat = 60.0 / 128;
+        double bar = beat * 4;
+        double step = beat / 4;
+        int bars = 8;
+        float[] b = buf(bar * bars);
+
+        int[] roots = {54, 50, 57, 52, 54, 50, 57, 52};         // F#m D A E, twice
+        boolean[] minor = {true, false, false, false, true, false, false, false};
+
+        // The lead in eighth notes, one row per two bars: the signal's call, then an answer
+        int[] lead = {
+            78, 0, 81, 0, 85, 0, 0, 0,     -1, -1, 83, 81, 78, 0, -1, -1,
+            78, 0, 81, 0, 85, 0, 88, 0,    83, 0, 80, 0, 76, 0, -1, -1,
+            78, 0, 81, 0, 85, 0, 0, 0,     -1, -1, 83, 81, 78, 0, 76, 0,
+            73, 0, 76, 0, 81, 0, 85, 0,    83, 0, 0, 0, 80, 0, -1, -1
+        };
+
+        for (int i = 0; i < bars; i++) {
+
+            double t0 = i * bar;
+            int r = roots[i];
+            int[] chord = triad(r, minor[i]);
+
+            for (int n : chord) {
+                pad(b, t0, bar * 1.02, n, 0.08);
+            }
+
+            // Bass: sixteenths, jumping between the root and its octave
+            for (int s = 0; s < 16; s++) {
+                int note = (s % 2 == 0) ? r - 24 : r - 12;
+                tone(b, t0 + s * step, step * 0.85, hz(note), hz(note), Wave.SAW, 0.12, 0.002, 1.6);
+            }
+
+            // Arpeggio: the chord climbing in plucked sixteenths, high up
+            int[] arp = {chord[0], chord[1], chord[2], chord[0] + 12};
+            for (int s = 0; s < 16; s++) {
+                int note = arp[s % 4] + 12;
+                tone(b, t0 + s * step, step * 0.9, hz(note), hz(note), Wave.TRI, 0.07, 0.002, 2.5);
+            }
+
+            // Beat: a kick on every beat, open hats on the off-beats, a snare on 2 and 4
+            for (int k = 0; k < 4; k++) {
+                kick(b, t0 + k * beat, 0.8);
+                noise(b, t0 + k * beat + beat / 2, 0.09, 0.07, 1.5, 1.0, 1.0);
+            }
+            snare(b, t0 + beat, 0.45);
+            snare(b, t0 + 3 * beat, 0.45);
+            for (int s = 0; s < 16; s++) {
+                hat(b, t0 + s * step, 0.025);
+            }
+
+            // A snare roll at the end of the loop, leading back to the start
+            if (i == bars - 1) {
+                for (int s = 0; s < 8; s++) {
+                    snare(b, t0 + 2 * beat + s * step, 0.15 + 0.04 * s);
+                }
+            }
+        }
+
+        leadLine(b, 0, beat / 2, lead, 0.09);
+        echo(b, beat * 0.75, 0.3, 2);
+        drive(b, 1.3);
+        return finish(b, 0.42);
+    }
+
+    /**
+     * Mission 3, The Mothership: dark and heavy, facing the ship that took her. Slow war
+     * drums, a growling bass, a choir-like pad, a ringing metal clank and a brass-like
+     * lead that climbs as the ship comes into view.
+     */
+    private static short[] synthMothership() {
+
+        double beat = 60.0 / 100;
+        double bar = beat * 4;
+        int bars = 8;
+        float[] b = buf(bar * bars);
+        float[] bass = buf(bar * bars);
+
+        int[] roots = {48, 44, 41, 43, 48, 44, 46, 43};         // Cm Ab Fm G, Cm Ab Bb G
+        boolean[] minor = {true, false, true, false, true, false, false, false};
+
+        // The lead in quarter notes, one row per four bars
+        int[] lead = {
+            67, 0, 68, 67,   68, 0, 72, 0,   68, 0, 65, 0,   67, 0, 0, -1,
+            67, 0, 68, 67,   72, 0, 75, 0,   74, 0, 70, 0,   71, 0, 0, -1
+        };
+
+        for (int i = 0; i < bars; i++) {
+
+            double t0 = i * bar;
+            int r = roots[i];
+            int[] chord = triad(r, minor[i]);
+
+            // A choir-like pad, and a deep drone under it
+            for (int n : chord) {
+                pad(b, t0, bar * 1.05, n + 12, 0.10);
+            }
+            pad(b, t0, bar * 1.05, r - 12, 0.14);
+
+            // A growling bass in eighths (distorted later)
+            for (int e = 0; e < 8; e++) {
+                double f = hz(r - 24);
+                tone(bass, t0 + e * beat / 2, beat * 0.45, f, f, Wave.SAW, (e % 2 == 0) ? 0.5 : 0.3, 0.003, 1.0);
+            }
+
+            // War drums: half-time, with toms rolling round the big snare
+            kick(b, t0, 1.0);
+            kick(b, t0 + 1.5 * beat, 0.8);
+            tom(b, t0 + beat, 110, 0.5);
+            snare(b, t0 + 2 * beat, 0.7);
+            noise(b, t0 + 2 * beat, 0.5, 0.18, 1.2, 0.5, 0.2);            // the snare's long tail
+            tom(b, t0 + 3 * beat, 85, 0.6);
+            tom(b, t0 + 3.5 * beat, 70, 0.6);
+            for (int s = 0; s < 8; s++) {
+                hat(b, t0 + s * beat / 2, 0.03);
+            }
+
+            // A ringing metal clank, like the hull of the ship
+            tone(b, t0 + 0.75 * beat, 0.3, 1250, 1240, Wave.SINE, 0.07, 0.001, 3.0);
+            tone(b, t0 + 0.75 * beat, 0.25, 3170, 3160, Wave.SINE, 0.04, 0.001, 3.5);
+        }
+
+        // The brass: two saws an octave apart
+        int[] low = new int[lead.length];
+        for (int i = 0; i < lead.length; i++) {
+            low[i] = (lead[i] > 0) ? lead[i] - 12 : lead[i];
+        }
+        melody(b, 0, beat, lead, Wave.SAW, 0.09);
+        melody(b, 0, beat, low, Wave.SQUARE, 0.05);
+        smooth(b, 0.5f);
+
+        drive(bass, 3.0);
+        for (int i = 0; i < b.length; i++) {
+            b[i] += bass[i] * 0.35f;
+        }
+
+        echo(b, beat * 0.75, 0.3, 2);
+        drive(b, 1.4);
+        return finish(b, 0.42);
+    }
+
+    /**
+     * Mission 4, The Wormhole: the race home. Fast and soaring: a four-on-the-floor beat,
+     * a rolling off-beat bass, bright chord stabs, racing arpeggios and a hopeful lead.
+     */
+    private static short[] synthWormhole() {
+
+        double beat = 60.0 / 150;
+        double bar = beat * 4;
+        double step = beat / 4;
+        int bars = 8;
+        float[] b = buf(bar * bars);
+
+        int[] roots = {52, 48, 55, 50, 52, 48, 55, 50};         // Em C G D, twice
+        boolean[] minor = {true, false, false, false, true, false, false, false};
+
+        // The lead in eighth notes, one row per two bars
+        int[] lead = {
+            71, 0, 0, 74, 0, 0, 76, 0,    72, 0, 0, 76, 0, 0, 79, 0,
+            79, 0, 0, 78, 0, 0, 74, 0,    74, 0, 0, 0, 78, 0, 81, 0,
+            83, 0, 0, 81, 0, 0, 79, 0,    76, 0, 0, 79, 0, 0, 84, 0,
+            83, 0, 0, 79, 0, 0, 74, 0,    78, 0, 0, 0, 0, 0, -1, -1
+        };
+
+        int[] stabs = {0, 3, 6, 8, 11, 14};                     // the chord stabs, in sixteenths (3 + 3 + 2)
+
+        for (int i = 0; i < bars; i++) {
+
+            double t0 = i * bar;
+            int r = roots[i];
+            int[] chord = triad(r, minor[i]);
+
+            for (int n : chord) {
+                pad(b, t0, bar * 1.02, n + 12, 0.07);
+            }
+
+            // Bass: rolling sixteenths after each beat (the beat itself is left to the kick)
+            for (int k = 0; k < 4; k++) {
+                for (int s = 1; s < 4; s++) {
+                    double f = hz(r - 12);
+                    tone(b, t0 + k * beat + s * step, step * 0.8, f, f, Wave.SAW, 0.11, 0.002, 1.4);
+                }
+            }
+
+            // Bright chord stabs: three saws, slightly out of tune with each other
+            for (int s : stabs) {
+                for (int n : chord) {
+                    double f = hz(n + 12);
+                    for (double detune : new double[]{0.993, 1.0, 1.007}) {
+                        tone(b, t0 + s * step, step * 1.6, f * detune, f * detune, Wave.SAW, 0.025, 0.003, 1.8);
+                    }
+                }
+            }
+
+            // Arpeggio: up and down the chord in sixteenths, high and thin
+            int[] arp = {chord[0], chord[1], chord[2], chord[0] + 12, chord[2], chord[1]};
+            for (int s = 0; s < 16; s++) {
+                int note = arp[s % arp.length] + 24;
+                tone(b, t0 + s * step, step * 0.8, hz(note), hz(note), Wave.SQUARE, 0.025, 0.002, 2.5);
+            }
+
+            // Beat: four on the floor, a clap on 2 and 4, open hats on the off-beats
+            for (int k = 0; k < 4; k++) {
+                kick(b, t0 + k * beat, 0.9);
+                noise(b, t0 + k * beat + beat / 2, 0.1, 0.08, 1.5, 1.0, 1.0);
+            }
+            snare(b, t0 + beat, 0.4);
+            snare(b, t0 + 3 * beat, 0.4);
+            for (int s = 0; s < 16; s++) {
+                hat(b, t0 + s * step, 0.03);
+            }
+
+            // The loop builds back to the start: a snare roll that speeds up
+            if (i == bars - 1) {
+                for (int s = 0; s < 16; s++) {
+                    snare(b, t0 + s * step, 0.08 + 0.025 * s);
+                }
+            }
+        }
+
+        leadLine(b, 0, beat / 2, lead, 0.10);
+        echo(b, beat * 0.75, 0.28, 2);
+        drive(b, 1.4);
+        return finish(b, 0.42);
     }
 
     /**

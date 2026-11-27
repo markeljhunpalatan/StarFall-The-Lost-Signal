@@ -70,6 +70,10 @@ final class BossArt {
             return GolemArt.blastFrames();
         }
 
+        if (design == Boss.EXECUTIONER) {
+            return ExecutionerArt.blastFrames();
+        }
+
         return Sprites.range("boss/blast" + SHIP_FOR_DESIGN[design] + "_", 0, BLAST_FRAMES[design] - 1);
     }
 

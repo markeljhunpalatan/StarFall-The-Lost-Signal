@@ -73,8 +73,16 @@ public class Mission {
     double baseSpeed = 1.0;
     double speedRamp = 0.3;
 
+    // How fiercely the aliens fight: aggression makes them shoot more often, faster and in
+    // spreads (and come in bigger groups); toughness multiplies their health. 1.0 = normal.
+    double aggression = 1.0;
+    double toughness = 1.0;
+
     final List<BossSpec> bosses = new ArrayList<>();
     final List<Radio> radioLines = new ArrayList<>();
+
+    /** The music an ADVENTURE mission plays (null = the first mission's music). */
+    SoundManager.Track music = null;
 
     /** Fixed ship {cannons, ammo, engines, hull}. Only LEVEL mode uses this. */
     int[] preset = null;
@@ -127,11 +135,23 @@ public class Mission {
         return this;
     }
 
+    /** Fiercer aliens: aggression (how hard they shoot) and toughness (their health), both 1.0 = normal. */
+    Mission fierce(double aggression, double toughness) {
+        this.aggression = aggression;
+        this.toughness = toughness;
+        return this;
+    }
+
     /** A boss fight. In a SURVIVE mission atKills is not used: the boss arrives when the timer runs out. */
     Mission boss(int atKills, String name, int health, int design,
                  String speaker, String line) {
         Radio radio = (line == null) ? null : new Radio(0, speaker, line);
         bosses.add(new BossSpec(atKills, health, name, design, radio));
+        return this;
+    }
+
+    Mission music(SoundManager.Track track) {
+        this.music = track;
         return this;
     }
 
@@ -153,13 +173,15 @@ public class Mission {
     }
 
     // ---------------------------------------------------------------
-    // THE CAMPAIGN  (boss health grows every mission: 250 -> 450 -> 900 -> 1000)
+    // THE CAMPAIGN  (boss health grows every mission: 250 -> 450 -> 900 -> 1000,
+    // then each boss is scaled to your ship when it arrives: see GamePanel.bossHealthScale)
     // Health is in damage points: a basic shot does 10 damage.
     // ---------------------------------------------------------------
     static final Mission[] CAMPAIGN = {
 
         new Mission("EARTH DEFENSE", SpaceBackground.Scene.EARTH,
                     Objective.KILLS, 15, 100)
+            .music(SoundManager.Track.EARTH_DEFENSE)
             .enemies(0.45, 2.0)
             .moves(0.75, 2.0, 2.0)
             .hazards(520, 0, 0.35)
@@ -172,6 +194,7 @@ public class Mission {
 
         new Mission("DEEP-SPACE PURSUIT", SpaceBackground.Scene.DEEP_SPACE,
                     Objective.KILLS, 20, 74)
+            .music(SoundManager.Track.DEEP_SPACE)
             .enemies(0.15, 0.55)
             .moves(0.30, 0.60, 2.0)
             .exploders(0.45)
@@ -185,24 +208,34 @@ public class Mission {
             .boss(20, "DEEP-SPACE WARSHIP", 450, 1,
                   "PILOT", "A warship! It's blocking the signal. Break through!"),
 
+        // Missions 3 and 4 throw a lot more aliens at you, and fiercer ones: they shoot
+        // harder (in spreads) and take more hits, and every kind of alien comes early
         new Mission("THE MOTHERSHIP", SpaceBackground.Scene.MOTHERSHIP,
-                    Objective.KILLS, 8, 70)
-            .enemies(0.1, 0.5)
-            .moves(0.2, 0.4, 0.6)
-            .exploders(0.3)
+                    Objective.KILLS, 30, 40)
+            .music(SoundManager.Track.MOTHERSHIP)
+            .enemies(0.0, 0.0)
+            .moves(0.05, 0.15, 0.3)
+            .exploders(0.2)
             .hazards(420, 0, 0.1)
-            .speed(1.1, 0.35)
+            .speed(1.2, 0.40)
+            .fierce(1.4, 2.2)
             .radio(0.0, "COMMAND", "That signature... it's the mothership! Clear its escorts!")
-            .boss(8, "ALIEN MOTHERSHIP", 900, 2,
+            .radio(0.5, "COMMAND", "It's launching everything it has - hold on, pilot!")
+            // Halfway, the mothership sends out its executioner; the mothership itself comes last
+            .boss(15, "UNDEAD EXECUTIONER", 600, Boss.EXECUTIONER,
+                  "PILOT", "Something just dropped out of the mothership... it moves like a puppet on strings!")
+            .boss(30, "ALIEN MOTHERSHIP", 900, 2,
                   "PILOT", "That's the ship that took her. Give her back!"),
 
         new Mission("THE WORMHOLE", SpaceBackground.Scene.WORMHOLE,
-                    Objective.SURVIVE, 45, 42)
-            .enemies(0.0, 0.2)
-            .moves(0.0, 0.15, 0.35)
-            .exploders(0.5)
+                    Objective.SURVIVE, 60, 28)
+            .music(SoundManager.Track.WORMHOLE)
+            .enemies(0.0, 0.0)
+            .moves(0.0, 0.05, 0.15)
+            .exploders(0.3)
             .hazards(230, 560, 0.0)
-            .speed(1.15, 0.50)
+            .speed(1.3, 0.50)
+            .fierce(1.6, 2.4)
             .radio(0.0, "PILOT", "A wormhole! It's unstable - I have to get her through!")
             .radio(0.45, "COMMAND", "Hull is holding! Keep going, pilot!")
             .radio(0.8, "PILOT", "Almost there... hold together, just a little longer!")

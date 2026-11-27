@@ -15,10 +15,14 @@ import java.awt.image.BufferedImage;
  * MISSILE - a homing missile from the Warship. It steers toward you, but you
  *           can shoot it down. It fizzles out after a few seconds.
  * FIST    - the golem's rocket fist. It works exactly like a missile.
+ * SCYTHE  - a spinning crescent blade from the executioner's scythe. Big, and it
+ *           can't be shot down: dodge it.
+ * SOUL    - a lost soul raised by the executioner. A slow missile: it drifts after
+ *           you, and one hit destroys it.
  */
 public class BossBullet {
 
-    public enum Style { BOSS, ALIEN, RING, MISSILE, FIST }
+    public enum Style { BOSS, ALIEN, RING, MISSILE, FIST, SCYTHE, SOUL }
 
     private double x;
     private double y;
@@ -70,6 +74,22 @@ public class BossBullet {
         return homing(cx - 8, cy - 5, angle, Style.FIST);
     }
 
+    /** A crescent blade from the executioner's scythe, with its middle at (cx, cy). */
+    public static BossBullet scythe(double cx, double cy, double vx, double vy) {
+        return new BossBullet(cx - 10, cy - 6, vx, vy, 1.0, Style.SCYTHE);
+    }
+
+    /** A lost soul, with its middle at (cx, cy): it drifts after you like a slow missile. */
+    public static BossBullet soul(double cx, double cy, double angle) {
+
+        BossBullet s = homing(cx - 8, cy - 5, angle, Style.SOUL);
+        s.speed = 2.5;
+        s.life = 420;
+        s.vx = Math.cos(angle) * s.speed;
+        s.vy = Math.sin(angle) * s.speed;
+        return s;
+    }
+
     private static BossBullet homing(double x, double y, double angle, Style style) {
 
         BossBullet m = new BossBullet(x, y, 0, 0, 0.8, style);
@@ -110,9 +130,9 @@ public class BossBullet {
         y += vy;
     }
 
-    /** Homing missiles and the golem's rocket fists. */
+    /** Homing missiles, the golem's rocket fists and the executioner's lost souls. */
     public boolean isMissile() {
-        return style == Style.MISSILE || style == Style.FIST;
+        return style == Style.MISSILE || style == Style.FIST || style == Style.SOUL;
     }
 
     /** Missiles can be shot down by the player. */
@@ -173,6 +193,16 @@ public class BossBullet {
     public void draw(Graphics2D g2) {
 
         if (style == Style.FIST && drawFist(g2)) {
+            return;
+        }
+
+        if (style == Style.SCYTHE) {
+            ExecutionerArt.drawScythe(g2, getCenterX(), getCenterY(), -tick * 0.35, 36);   // about as tall as its hitbox
+            return;
+        }
+
+        if (style == Style.SOUL) {
+            ExecutionerArt.drawSoul(g2, getCenterX(), getCenterY(), tick);
             return;
         }
 
@@ -313,6 +343,14 @@ public class BossBullet {
 
         if (style == Style.FIST) {
             return new Rectangle(getCenterX() - 9, getCenterY() - 7, 18, 14);   // the fist is a bit bigger
+        }
+
+        if (style == Style.SCYTHE) {
+            return new Rectangle(getCenterX() - 13, getCenterY() - 28, 26, 56);  // the blade is tall
+        }
+
+        if (style == Style.SOUL) {
+            return new Rectangle(getCenterX() - 8, getCenterY() - 10, 16, 20);
         }
 
         return new Rectangle((int) x, (int) y, width, height);

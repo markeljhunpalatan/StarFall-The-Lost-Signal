@@ -19,7 +19,8 @@ import java.util.Random;
  * LOOPER - flies in loop-the-loops
  * DASHER - creeps in, stops and glows, then rockets straight at you (tough)
  *
- * "speedFactor" makes aliens faster the longer you survive.
+ * "speedFactor" makes aliens faster the longer you survive, and "aggression"
+ * (see setAggression) makes them shoot more often, with faster shots.
  *
  * EVASIVE aliens (HARDCORE, after the first boss) watch your bullets, predict
  * which ones would hit them, and slide out of the way. They have cyan eyes.
@@ -58,6 +59,9 @@ public class Enemy {
     private int dashPhase = 0;
     private int chargeTimer = 0;
     private double dashVy = 0;
+
+    // How hard it shoots: 1.0 = normal; higher = more often, faster shots, and gunners fire spreads
+    private double aggression = 1.0;
 
     // Evasion: 0 = never dodges, 1 = expert dodger
     private double evasion = 0;
@@ -127,9 +131,9 @@ public class Enemy {
         loopRadius = loopR;
         health = hp;
 
-        // The small aliens start with a short wait, so they don't all fire at once
-        if (type == Type.SCOUT || type == Type.ZIGZAG) {
-            shootCooldown = 40 + RANDOM.nextInt(50);
+        // The other shooters start with a short wait, so they don't all fire at once
+        if (type == Type.SCOUT || type == Type.ZIGZAG || type == Type.DIVER || type == Type.LOOPER) {
+            shootCooldown = 30 + RANDOM.nextInt(45);
         }
 
         // Pick a lane that keeps the whole weave on screen
@@ -154,6 +158,28 @@ public class Enemy {
         y = py;
         baseY = py;
         loopX = px + loopRadius;
+    }
+
+    /**
+     * How aggressively it shoots: 1.0 = normal. Higher means shorter waits between shots
+     * and faster shots, and from 1.3 a gunner fires a three-way spread.
+     */
+    public void setAggression(double level) {
+        aggression = Math.max(0.5, level);
+        shootCooldown = (int) Math.round(shootCooldown / aggression);
+    }
+
+    public double getAggression() {
+        return aggression;
+    }
+
+    /** Multiplies its health (tougher aliens in the later missions). */
+    public void setToughness(double factor) {
+        health = (int) Math.max(1, Math.round(health * factor));
+    }
+
+    public int getHealth() {
+        return health;
     }
 
     /** Makes the alien dodge your bullets. skill: 0.0 (never) to 1.0 (expert). */
@@ -327,12 +353,15 @@ public class Enemy {
     /**
      * The shots this alien fires this tick (usually none), and when.
      *
-     *   GUNNER  - one shot straight left
+     *   GUNNER  - one shot straight left (a three-way spread when it is aggressive)
      *   SCOUT   - one shot aimed at where the player is
      *   ZIGZAG  - a quick pair of shots straight left
+     *   DIVER   - an aimed shot while it lines up on you (not once it charges)
+     *   LOOPER  - an aimed shot as it loops
      *
      * Only aliens that are on screen (and past the entrance) shoot. The small aliens
-     * shoot from the moment they come in, and across nearly the whole screen.
+     * shoot from the moment they come in, and across nearly the whole screen. Aggression
+     * shortens the waits between shots and makes the shots faster.
      */
     public List<BossBullet> fire(int playerCenterX, int playerCenterY) {
 
@@ -349,25 +378,42 @@ public class Enemy {
         double sx = getShotX();
         double sy = getShotY();
 
+        // Every alien's shots are faster than they used to be, and faster still when it is aggressive
+        double fast = SHOT_SPEED * (1.0 + 0.15 * (aggression - 1.0));
+
         switch (type) {
 
             case GUNNER:
-                shots.add(new BossBullet(sx, sy, -5.0, 0.0, 0.6));
-                shootCooldown = 110 + RANDOM.nextInt(50);
+                shots.add(new BossBullet(sx, sy, -5.0 * fast, 0.0, 0.6));
+                if (aggression >= 1.3) {
+                    shots.add(new BossBullet(sx, sy, -4.8 * fast, -1.3, 0.6));
+                    shots.add(new BossBullet(sx, sy, -4.8 * fast, 1.3, 0.6));
+                }
+                shootCooldown = waitBetweenShots(85, 40);
                 break;
 
             case SCOUT:
-                // Aim at the player: the shot slides across to where they are
-                double frames = Math.max(20.0, (sx - playerCenterX) / 5.5);
-                double vy = Math.max(-3.0, Math.min(3.0, (playerCenterY - sy) / frames));
-                shots.add(new BossBullet(sx, sy, -5.5, vy, 0.6));
-                shootCooldown = 80 + RANDOM.nextInt(30);
+                shots.add(aimedShot(sx, sy, playerCenterX, playerCenterY, 5.5 * fast));
+                shootCooldown = waitBetweenShots(65, 25);
                 break;
 
             case ZIGZAG:
-                shots.add(new BossBullet(sx, sy - 5, -5.0, 0.0, 0.6));
-                shots.add(new BossBullet(sx, sy + 5, -5.0, 0.0, 0.6));
-                shootCooldown = 110 + RANDOM.nextInt(30);
+                shots.add(new BossBullet(sx, sy - 5, -5.0 * fast, 0.0, 0.6));
+                shots.add(new BossBullet(sx, sy + 5, -5.0 * fast, 0.0, 0.6));
+                shootCooldown = waitBetweenShots(85, 25);
+                break;
+
+            case DIVER:
+                if (x <= 330) {
+                    return shots;                   // once it charges, it only rams
+                }
+                shots.add(aimedShot(sx, sy, playerCenterX, playerCenterY, 5.5 * fast));
+                shootCooldown = waitBetweenShots(95, 30);
+                break;
+
+            case LOOPER:
+                shots.add(aimedShot(sx, sy, playerCenterX, playerCenterY, 5.0 * fast));
+                shootCooldown = waitBetweenShots(100, 30);
                 break;
 
             default:
@@ -376,6 +422,22 @@ public class Enemy {
 
         muzzleFlash = 6;
         return shots;
+    }
+
+    /** How much faster every alien's shots are than they used to be. */
+    private static final double SHOT_SPEED = 1.2;
+
+    /** Ticks until the next shot: base plus a random part, shorter for an aggressive alien. */
+    private int waitBetweenShots(int base, int spread) {
+        return (int) Math.round((base + RANDOM.nextInt(spread)) / aggression);
+    }
+
+    /** A shot aimed at the player: it slides across to where they are. */
+    private static BossBullet aimedShot(double sx, double sy, int playerCenterX, int playerCenterY, double speed) {
+
+        double frames = Math.max(20.0, (sx - playerCenterX) / speed);
+        double vy = Math.max(-3.2, Math.min(3.2, (playerCenterY - sy) / frames));
+        return new BossBullet(sx, sy, -speed, vy, 0.6);
     }
 
     public void takeDamage(int damage) {

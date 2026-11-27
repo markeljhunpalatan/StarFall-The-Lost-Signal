@@ -472,7 +472,7 @@ public class Player {
     /** The muzzle glows in the colour of the current weapon, a little brighter for higher levels. */
     private void drawMuzzle(Graphics2D g2) {
 
-        // Fully upgraded cannons (the omega volley) glow gold; otherwise the weapon's own colour
+        // Fully upgraded cannons (the max weapons) glow gold; otherwise the weapon's own colour
         Color colour = laserCannon ? new Color(255, 215, 110) : Weapon.forLevel(weaponLevel).glow;
         int glow = 110 + (int) (Math.sin(tick * 0.3) * 40);
         int size = 6 + caliber * 2;

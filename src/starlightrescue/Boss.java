@@ -13,11 +13,13 @@ import java.util.Random;
 /**
  * A boss ship.
  *
- * - There are 6 DESIGNS, so every boss fight looks different:
+ * - There are 7 DESIGNS, so every boss fight looks different:
  *     0 Vanguard (claws)   1 Warship (armoured)   2 Mothership (saucer)
  *     3 Dreadnought (spiked)   4 Hive Queen (organic)
  *     5 Mecha-stone Golem (a stone giant: the Adventure's final boss, and the
  *       sixth boss in Hardcore; see GolemArt)
+ *     6 Undead Executioner (a reaper on puppet strings: the mothership's guard in
+ *       Mission 3, and the seventh boss in Hardcore; see ExecutionerArt)
  * - It flies in from the right, then bounces up and down.
  * - It has 3 PHASES that depend on its health. Every new phase it moves faster
  *   and uses a nastier attack (single shot -> 3-way spread -> 5-way + aimed).
@@ -38,22 +40,35 @@ import java.util.Random;
  * each with the same warning and timing as the ships' moves:
  *     ROCKET FISTS (homing missiles), CRYSTAL LASER (the laser),
  *     BOULDER ROLL (the charge) and CRYSTAL PULSE (the energy ring)
+ *
+ * The executioner has no versions either, and moves of its own:
+ *     REAPING SCYTHE - hurls spinning crescent blades (one more each phase)
+ *     GRAVE SPIKES   - marks lanes across the screen (one on you), then shadow
+ *                      spikes burst along them
+ *     LOST SOULS     - releases flame wisps that drift after you (shoot them down)
+ *     PHANTOM STEP   - melts into shadow, reforms somewhere else and fires
+ * and UNDYING: the first time it is destroyed, it collapses and rises again
+ * with a third of its health.
  */
 public class Boss {
 
-    public static final int DESIGN_COUNT = 6;
+    public static final int DESIGN_COUNT = 7;
 
     /** The Mecha-stone Golem: the final boss of the Adventure, and the sixth boss in Hardcore. */
     public static final int GOLEM = 5;
 
+    /** The Undead Executioner: the mothership's guard in Mission 3, and the seventh boss in Hardcore. */
+    public static final int EXECUTIONER = 6;
+
     private static final String[] DESIGN_NAMES = {
         "ALIEN VANGUARD", "DEEP-SPACE WARSHIP", "ALIEN MOTHERSHIP", "DREADNOUGHT", "HIVE QUEEN",
-        "MECHA-STONE GOLEM"
+        "MECHA-STONE GOLEM", "UNDEAD EXECUTIONER"
     };
 
     // {width, height} of each design
     private static final int[][] SIZES = {
-        {110, 120}, {140, 130}, {130, 170}, {150, 150}, {120, 150}, {GolemArt.WIDTH, GolemArt.HEIGHT}
+        {110, 120}, {140, 130}, {130, 170}, {150, 150}, {120, 150}, {GolemArt.WIDTH, GolemArt.HEIGHT},
+        {ExecutionerArt.WIDTH, ExecutionerArt.HEIGHT}
     };
 
     // Colours of each design: {body light, body dark, secondary, wings, core, lights}
@@ -69,7 +84,9 @@ public class Boss {
         {new Color(70, 170, 70), new Color(15, 60, 20), new Color(130, 220, 90),
          new Color(40, 120, 45), new Color(255, 230, 70), new Color(255, 100, 200)},
         {new Color(150, 145, 150), new Color(45, 42, 48), new Color(190, 185, 190),
-         new Color(95, 90, 98), new Color(90, 230, 255), new Color(120, 255, 255)}
+         new Color(95, 90, 98), new Color(90, 230, 255), new Color(120, 255, 255)},
+        {new Color(60, 52, 70), new Color(14, 12, 12), new Color(130, 125, 140),
+         new Color(40, 30, 50), new Color(255, 60, 60), new Color(255, 70, 70)}
     };
 
     private static final Random RANDOM = new Random();
@@ -99,7 +116,7 @@ public class Boss {
     private int tick = 0;
 
     // ---- Special moves ----
-    public enum Move { NONE, CHARGE, MISSILES, RING, DRONES, LASER, SWARM, BLINK }
+    public enum Move { NONE, CHARGE, MISSILES, RING, DRONES, LASER, SWARM, BLINK, SCYTHE, SPIKES, SOULS }
 
     private Move move = Move.NONE;
     private int moveStage = 0;          // 1 = warning, 2 = attacking, 3 = recovering
@@ -112,6 +129,32 @@ public class Boss {
 
     private final List<BossBullet> pendingShots = new ArrayList<>();
     private final List<Enemy> pendingSpawns = new ArrayList<>();
+
+    // ---- Scaled to your ship: the stronger your ship, the stronger the boss (see scaleToShip) ----
+    static final double WEAK_POWER = 0.3;           // below this the boss attacks more slowly
+    static final double SHIELD_POWER = 0.6;         // from here it has a regenerating shield
+    static final double BARRAGE_POWER = 0.8;        // from here it adds a bullet barrage, and uses its moves more often
+    private static final int SHIELD_RECHARGE_DELAY = 240;   // ticks without a hit before the shield comes back
+
+    private double power = 0.5;                     // the ship's power when the boss arrived (0 - 1)
+    private int shield = 0;
+    private int maxShield = 0;
+    private int shieldDelay = 0;
+    private int shieldFlash = 0;
+    private boolean barrage = false;
+    private double pace = 1.0;                      // above 1 = slower attacks and moves, below 1 = faster
+    private int allyTimer = 420;                    // ticks until it calls in its allies again
+    private boolean alliesJustCalled = false;
+
+    // ---- The executioner (see ExecutionerArt) ----
+    static final int RISE_TICKS = 110;              // UNDYING: how long it takes to collapse and rise again
+    static final double RISE_HEALTH = 0.35;         // the share of its health it rises with
+    static final int SPIKE_HALF = 22;               // half the height of a grave-spike lane
+
+    private boolean revived = false;
+    private int riseTimer = 0;
+    private boolean risenJustNow = false;
+    private int[] spikeLanes = new int[0];
 
     // ---- The golem's animations (see GolemArt) ----
     private static final int SWING_TICKS = 21;      // the arm slam: 7 frames of 3 ticks
@@ -131,9 +174,9 @@ public class Boss {
         return DESIGN_NAMES[Math.floorMod(design, DESIGN_COUNT)];
     }
 
-    /** True for the ship bosses. The golem has no versions: it always fights the same way. */
+    /** True for the ship bosses (0 - 4). The golem and the executioner have no versions: they fight their own way. */
     public static boolean hasVersions(int design) {
-        return Math.floorMod(design, DESIGN_COUNT) != GOLEM;
+        return Math.floorMod(design, DESIGN_COUNT) < GOLEM;
     }
 
     /**
@@ -165,7 +208,67 @@ public class Boss {
 
     /** How much slower (above 1) or faster (below 1) than normal it attacks. */
     private double attackRate() {
-        return hasVersions(design) ? VERSION_RATE[version] : 1.0;
+        return (hasVersions(design) ? VERSION_RATE[version] : 1.0) * pace;
+    }
+
+    /**
+     * Scales the boss to your ship (called once, when it arrives). power goes from 0.0
+     * (a new, battered ship) to 1.0 (fully upgraded, top level, unhurt):
+     *   - a weak ship (below WEAK_POWER) faces a boss that attacks and uses its moves more slowly
+     *   - from SHIELD_POWER it has an energy shield that comes back if it is left alone
+     *   - from BARRAGE_POWER it adds a ring of shots to its volleys and uses its moves more often
+     *   - it always calls in allies, more of them and more often the stronger the ship is
+     * (The game also gives it more health, see GamePanel.bossHealthScale.)
+     */
+    public void scaleToShip(double shipPower) {
+
+        power = Math.max(0, Math.min(1, shipPower));
+        barrage = power >= BARRAGE_POWER;
+        pace = (power < WEAK_POWER) ? 1.2 : (barrage ? 0.8 : 1.0);
+        specialCooldown = (int) Math.round(specialCooldown * pace);
+
+        if (power >= SHIELD_POWER) {
+            maxShield = (int) Math.round(maxHealth * 0.2);
+            shield = maxShield;
+        }
+
+        allyTimer = allyInterval();
+    }
+
+    /** Ticks between calls for allies: every 10 seconds against a weak ship, every 6 against a strong one. */
+    private int allyInterval() {
+        return (int) Math.round(600 - 240 * power);
+    }
+
+    /** What makes this boss tougher (or easier), for the arrival warning. */
+    public String abilityText() {
+
+        List<String> parts = new ArrayList<>();
+
+        if (power < WEAK_POWER) {
+            parts.add("WEAKENED");
+        }
+        parts.add("ALLIES");
+        if (maxShield > 0) {
+            parts.add("SHIELD");
+        }
+        if (barrage) {
+            parts.add("BARRAGE");
+        }
+
+        return String.join("  ·  ", parts);
+    }
+
+    public int getShield()        { return shield; }
+    public int getMaxShield()     { return maxShield; }
+    public boolean hasBarrage()   { return barrage; }
+    public double getPower()      { return power; }
+
+    /** True once, right after the boss calls in its allies (the game shows a warning). */
+    public boolean consumeAlliesCalled() {
+        boolean called = alliesJustCalled;
+        alliesJustCalled = false;
+        return called;
     }
 
     /** How much of each hit it takes (the Carrier's shield soaks up part). */
@@ -215,6 +318,16 @@ public class Boss {
             return;   // defeated: the game panel plays the explosions
         }
 
+        // UNDYING: while the executioner collapses and rises again, nothing else happens
+        if (riseTimer > 0) {
+            riseTimer--;
+            if (riseTimer == 0) {
+                health = Math.max(1, (int) Math.round(maxHealth * RISE_HEALTH));
+                risenJustNow = true;
+            }
+            return;
+        }
+
         // Slide in from the right
         if (entering) {
             x -= 2.5;
@@ -224,6 +337,9 @@ public class Boss {
             }
             return;
         }
+
+        updateShield();
+        updateAllies();
 
         // Special moves (some of them stop the normal up-and-down patrol)
         if (updateSpecial(bottom, playerCenterY)) {
@@ -243,6 +359,50 @@ public class Boss {
             y = bottom - height;
             direction = -1;
         }
+    }
+
+    /** The shield comes back, a little at a time, once the boss has gone a while without being hit. */
+    private void updateShield() {
+
+        if (shieldFlash > 0) {
+            shieldFlash--;
+        }
+
+        if (maxShield == 0 || shield >= maxShield) {
+            return;
+        }
+
+        if (shieldDelay > 0) {
+            shieldDelay--;
+        } else {
+            shield = Math.min(maxShield, shield + Math.max(1, maxShield / 180));
+        }
+    }
+
+    /** Every few seconds the boss calls in a group of allies, which fly out from beside it. */
+    private void updateAllies() {
+
+        allyTimer--;
+
+        if (allyTimer > 0) {
+            return;
+        }
+
+        allyTimer = allyInterval();
+
+        // More allies, and nastier ones, against a stronger ship (and in its later phases)
+        int count = 1 + (int) Math.round(power * 2) + (getPhase() == 3 ? 1 : 0);
+        Enemy.Type[] kinds = (power >= 0.6)
+            ? new Enemy.Type[]{Enemy.Type.GUNNER, Enemy.Type.DASHER, Enemy.Type.LOOPER, Enemy.Type.DIVER}
+            : new Enemy.Type[]{Enemy.Type.SCOUT, Enemy.Type.ZIGZAG, Enemy.Type.GUNNER, Enemy.Type.DIVER};
+
+        for (int i = 0; i < count; i++) {
+            Enemy ally = new Enemy(kinds[(moveCount + i) % kinds.length], 1.1);
+            ally.placeAt(x - 30, y + height / 2.0 - 17 + (i - (count - 1) / 2.0) * 46);
+            pendingSpawns.add(ally);
+        }
+
+        alliesJustCalled = true;
     }
 
     /** The golem's animation timers, and how far its boulder has rolled. */
@@ -296,7 +456,7 @@ public class Boss {
 
         List<BossBullet> shots = new ArrayList<>();
 
-        if (entering || health <= 0) {
+        if (entering || health <= 0 || riseTimer > 0) {
             return shots;
         }
 
@@ -381,9 +541,19 @@ public class Boss {
         }
 
         // Battery: two turrets on the nose add shots to every other volley
-        if (version == 1 && patternCounter % 2 == 1) {
+        if (version == 1 && hasVersions(design) && patternCounter % 2 == 1) {
             shots.add(new BossBullet(sx, sy - 18, -6.0, 0, 1.0));
             shots.add(new BossBullet(sx, sy + 18, -6.0, 0, 1.0));
+        }
+
+        // Barrage (against a strong ship): every third volley also sends a ring of shots out to the left
+        if (barrage && patternCounter % 3 == 0) {
+            int count = 9 + getPhase();
+            for (int i = 0; i < count; i++) {
+                // A fan facing left, from straight down round to straight up, turned a little every other time
+                double a = Math.PI / 2 + Math.PI * (i + 0.5 * (patternCounter % 2)) / count;
+                shots.add(new BossBullet(sx, sy, Math.cos(a) * 4.6, Math.sin(a) * 4.6, 1.0));
+            }
         }
 
         // The first boss is gentle; each later boss attacks faster
@@ -425,6 +595,13 @@ public class Boss {
             case RING:
                 updateRing();
                 return false;
+            case SCYTHE:
+                return updateScythe(playerCenterY);
+            case SPIKES:
+                return updateSpikes(bottom, playerCenterY);
+            case SOULS:
+                updateSouls();
+                return false;
             default:            // DRONES and SWARM
                 updateLaunch();
                 return false;
@@ -433,6 +610,12 @@ public class Boss {
 
     /** The special moves follow the version: the look tells you what the boss will do. */
     private Move chooseMove() {
+
+        // The executioner takes turns with its own four moves
+        if (design == EXECUTIONER) {
+            Move[] cycle = {Move.SCYTHE, Move.SPIKES, Move.SOULS, Move.BLINK};
+            return cycle[moveCount % cycle.length];
+        }
 
         // The golem takes turns with the four moves its animations were made for
         if (design == GOLEM) {
@@ -476,7 +659,7 @@ public class Boss {
         alpha = 1.0;
 
         int[] cooldowns = {460, 380, 300};
-        specialCooldown = Math.max(220, cooldowns[getPhase() - 1] - tier * 20);
+        specialCooldown = (int) Math.round(Math.max(220, cooldowns[getPhase() - 1] - tier * 20) * pace);
         attackCooldown = Math.max(attackCooldown, 45);
     }
 
@@ -580,6 +763,149 @@ public class Boss {
         }
 
         return true;
+    }
+
+    // ---------- The executioner's moves ----------
+
+    // SCYTHE: a wind-up, then a swing that hurls crescent blades (one more for each phase),
+    // and the low sweep that follows sends one more straight at you
+    private boolean updateScythe(int playerCenterY) {
+
+        if (moveStage == 1 && moveTimer >= 40) {
+            nextStage();
+            throwBlades(playerCenterY, getPhase());
+        } else if (moveStage == 2 && moveTimer == 30) {
+            throwBlades(playerCenterY, 1);
+        } else if (moveStage == 2 && moveTimer >= 55) {
+            endMove();
+        }
+
+        return true;
+    }
+
+    private void throwBlades(int playerCenterY, int count) {
+
+        double sx = x - 20;
+        double sy = y + height * 0.4;
+
+        for (int i = 0; i < count; i++) {
+            double aim = playerCenterY + (i - (count - 1) / 2.0) * 80;     // fanned out above and below you
+            double frames = Math.max(40, (sx - 80) / 5.2);
+            double vy = Math.max(-2.5, Math.min(2.5, (aim - sy) / frames));
+            pendingShots.add(BossBullet.scythe(sx, sy, -5.2, vy));
+        }
+
+        SoundManager.get().playBoss(SoundManager.Sfx.BOOST, design);
+    }
+
+    // SPIKES: mark lanes across the screen (one of them where you are), then shadow spikes
+    // burst along them. The lanes never sit on top of each other, so there is always a way out.
+    private boolean updateSpikes(int bottom, int playerCenterY) {
+
+        if (moveStage == 1) {
+
+            if (moveTimer == 1) {
+                chooseLanes(bottom, playerCenterY);
+            }
+
+            if (moveTimer >= 64) {
+                nextStage();
+                SoundManager.get().playBoss(SoundManager.Sfx.EXPLODE, design);
+            }
+
+        } else if (moveStage == 2 && moveTimer >= 34) {
+            nextStage();
+        } else if (moveStage == 3 && moveTimer >= 18) {
+            spikeLanes = new int[0];
+            endMove();
+        }
+
+        return true;
+    }
+
+    private void chooseLanes(int bottom, int playerCenterY) {
+
+        int count = (getPhase() == 1) ? 2 : 3;
+        int top = GamePanel.PLAY_TOP + SPIKE_HALF + 4;
+        int low = bottom - SPIKE_HALF - 4;
+        int[] lanes = new int[count];
+        lanes[0] = Math.max(top, Math.min(low, playerCenterY));
+
+        for (int i = 1; i < count; i++) {
+            int lane;
+            int tries = 0;
+            do {
+                lane = top + RANDOM.nextInt(Math.max(1, low - top));
+                tries++;
+            } while (tries < 40 && tooClose(lane, lanes, i));
+            lanes[i] = lane;
+        }
+
+        spikeLanes = lanes;
+    }
+
+    private static boolean tooClose(int lane, int[] lanes, int used) {
+
+        for (int i = 0; i < used; i++) {
+            if (Math.abs(lanes[i] - lane) < SPIKE_HALF * 3) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** How far the spikes have grown across the screen: 0.0 - 1.0 (and back to 0 as they sink away). */
+    private double spikeGrowth() {
+
+        if (move != Move.SPIKES) {
+            return 0;
+        }
+        if (moveStage == 2) {
+            return Math.min(1.0, moveTimer / 8.0);
+        }
+        if (moveStage == 3) {
+            return Math.max(0.0, 1.0 - moveTimer / 18.0);
+        }
+        return 0;
+    }
+
+    // SOULS: raise the scythe and release lost souls, which drift after you until shot down
+    private void updateSouls() {
+
+        if (moveStage == 1 && moveTimer >= 36) {
+
+            int count = 2 + getPhase();
+            for (int i = 0; i < count; i++) {
+                double a = Math.PI + (i - (count - 1) / 2.0) * 0.45;
+                double sx = x + width * 0.3 + Math.cos(a) * 40;
+                double sy = y + height * 0.35 + Math.sin(a) * 60;
+                pendingShots.add(BossBullet.soul(sx, sy, a));
+            }
+
+            SoundManager.get().playBoss(SoundManager.Sfx.TELEPORT, design);
+            moveStage = 3;
+            moveTimer = 0;
+
+        } else if (moveStage == 3 && moveTimer >= 24) {
+            endMove();
+        }
+    }
+
+    /** True once, right after the executioner rises again (the game shows a warning). */
+    public boolean consumeRisen() {
+        boolean risen = risenJustNow;
+        risenJustNow = false;
+        return risen;
+    }
+
+    /** True while the executioner is collapsing and rising again. */
+    public boolean isRising() {
+        return riseTimer > 0;
+    }
+
+    /** True once it has used up its UNDYING. */
+    public boolean hasRisen() {
+        return revived;
     }
 
     // MISSILES: warm up the turrets, then fire homing missiles one by one
@@ -697,6 +1023,15 @@ public class Boss {
     /** The warning text for the special move that is about to happen (or null). */
     public String getMoveWarning() {
 
+        if (design == EXECUTIONER) {
+            switch (move) {
+                case SCYTHE: return "REAPING SCYTHE - DODGE THE BLADES!";
+                case SPIKES: return "GRAVE SPIKES - GET OUT OF THE RED LANES!";
+                case SOULS:  return "LOST SOULS - SHOOT THEM DOWN!";
+                default:     return null;              // its phantom step comes without warning
+            }
+        }
+
         // The golem's moves work the same way, so they get the same warnings in its own words
         if (design == GOLEM) {
             switch (move) {
@@ -724,6 +1059,35 @@ public class Boss {
      * or the laser beam while it fires. null when there is none.
      */
     public Rectangle getDangerZone() {
+
+        List<Rectangle> zones = getDangerZones();
+        return zones.isEmpty() ? null : zones.get(0);
+    }
+
+    /**
+     * Every area that hurts the player right now: the boss while it rams, its laser beam,
+     * or the lanes of grave spikes. Empty when there are none.
+     */
+    public List<Rectangle> getDangerZones() {
+
+        List<Rectangle> zones = new ArrayList<>();
+
+        if (move == Move.SPIKES && moveStage == 2) {
+            int tip = (int) Math.round(x * (1.0 - spikeGrowth()));
+            for (int lane : spikeLanes) {
+                zones.add(new Rectangle(tip, lane - SPIKE_HALF + 4, (int) x + 20 - tip, SPIKE_HALF * 2 - 8));
+            }
+            return zones;
+        }
+
+        Rectangle single = singleDangerZone();
+        if (single != null) {
+            zones.add(single);
+        }
+        return zones;
+    }
+
+    private Rectangle singleDangerZone() {
 
         if (move == Move.CHARGE && moveStage >= 2) {
             return getBounds();
@@ -780,15 +1144,82 @@ public class Boss {
 
         if (design == GOLEM) {
             drawGolem(g2, bx, by);
+        } else if (design == EXECUTIONER) {
+            drawExecutioner(g2, bx, by);
         } else {
             // The ship itself (see BossArt): flames, blinking lights, smoke and the hit flash
             BossArt.draw(g2, design, version, bx, by, width, height, tick, getPhase(), tier,
                          hitFlash > 0, health / (double) maxHealth);
         }
 
+        drawShield(g2, bx, by);
         drawMoveEffects(g2, bx, by, pal);
 
         g2.dispose();
+    }
+
+    /** The energy shield: a cyan bubble, as strong-looking as the shield is full. It flashes when hit. */
+    private void drawShield(Graphics2D g2, int bx, int by) {
+
+        if (shield <= 0 || health <= 0) {
+            return;
+        }
+
+        double full = shield / (double) maxShield;
+        int pulse = (int) (Math.sin(tick * 0.12) * 18);
+        int fill = (int) (18 + 30 * full) + (shieldFlash > 0 ? 50 : 0);
+        int edge = Math.min(255, (int) (90 + 120 * full) + pulse + (shieldFlash > 0 ? 60 : 0));
+
+        g2.setColor(new Color(110, 220, 255, Math.min(255, fill)));
+        g2.fillOval(bx - 16, by - 12, width + 32, height + 24);
+        g2.setStroke(new BasicStroke(2.2f));
+        g2.setColor(new Color(160, 240, 255, Math.max(0, edge)));
+        g2.drawOval(bx - 16, by - 12, width + 32, height + 24);
+        g2.setStroke(new BasicStroke(1f));
+    }
+
+    /** The executioner plays the animation that goes with what it is doing right now. */
+    private void drawExecutioner(Graphics2D g2, int bx, int by) {
+
+        ExecutionerArt.Pose pose;
+        int frame;
+
+        if (health <= 0) {
+            pose = ExecutionerArt.Pose.DEATH;                           // melts into a shadow, and is gone
+            frame = (tick - (deathTick < 0 ? tick : deathTick)) / 6;
+        } else if (riseTimer > 0) {
+            pose = ExecutionerArt.Pose.DEATH;                           // collapses, waits, then rises again
+            int t = RISE_TICKS - riseTimer;
+            frame = (t < 50) ? t / 5 : (t < 70 ? 9 : Math.max(0, 9 - (t - 70) / 4));
+        } else if (move == Move.SCYTHE) {
+            pose = ExecutionerArt.Pose.ATTACK;
+            frame = (moveStage == 1) ? moveTimer / 20 : 2 + moveTimer / 5;
+        } else if (move == Move.SPIKES) {
+            pose = ExecutionerArt.Pose.SKILL;
+            if (moveStage == 1) {
+                frame = Math.min(4, moveTimer / 13);
+            } else if (moveStage == 2) {
+                frame = (moveTimer < 6) ? 5 + moveTimer / 3 : (moveTimer < 28 ? 7 : 8 + (moveTimer - 28) / 3);
+            } else {
+                frame = 10 + moveTimer / 9;
+            }
+        } else if (move == Move.SOULS) {
+            pose = ExecutionerArt.Pose.SUMMON;
+            frame = (moveStage == 1) ? moveTimer / 8 : 4;
+        } else if (move == Move.BLINK) {
+            pose = ExecutionerArt.Pose.DEATH;                           // the phantom step: melts away, then reforms
+            frame = (moveStage == 1) ? (int) (moveTimer / 2.3) : Math.max(0, 9 - moveTimer / 2);
+        } else {
+            pose = (getPhase() >= 2) ? ExecutionerArt.Pose.IDLE2 : ExecutionerArt.Pose.IDLE;
+            frame = (tick / 8) % ExecutionerArt.frameCount(pose);
+        }
+
+        boolean still = health <= 0 || riseTimer > 0 || move == Move.SCYTHE || move == Move.SPIKES;
+        double bob = still ? 0 : Math.sin(tick * 0.05) * 3;
+        double sway = Math.sin(tick * 0.025) * 14;
+
+        ExecutionerArt.draw(g2, pose, frame, bx, by, width, height, tick, bob, sway, riseTimer > 0,
+                            hitFlash > 0, health / (double) maxHealth);
     }
 
     /** The golem plays the animation that goes with what it is doing right now. */
@@ -892,6 +1323,16 @@ public class Boss {
                 }
                 break;
 
+            case SPIKES:
+                for (int lane : spikeLanes) {
+                    if (moveStage == 1) {
+                        ExecutionerArt.drawSpikeWarning(g2, bx, lane, SPIKE_HALF, moveTimer / 64.0, tick);
+                    } else {
+                        ExecutionerArt.drawSpikes(g2, bx + 20, lane, SPIKE_HALF, spikeGrowth(), tick);
+                    }
+                }
+                break;
+
             case RING:
                 if (moveStage == 1) {
                     // Energy gathering into the core
@@ -964,14 +1405,40 @@ public class Boss {
             return;   // can't be hurt while arriving, blinking or after dying
         }
 
+        hitFlash = 3;
+
+        // The energy shield (against a strong ship) takes the hits first, and stops recharging for a while
+        if (maxShield > 0) {
+            shieldDelay = SHIELD_RECHARGE_DELAY;
+            if (shield > 0) {
+                int soaked = Math.min(shield, damage);
+                shield -= soaked;
+                damage -= soaked;
+                shieldFlash = 6;
+                if (damage <= 0) {
+                    return;
+                }
+            }
+        }
+
         // The Carrier's shield soaks up part of every hit
         health -= Math.max(1, (int) Math.round(damage * armour()));
-        hitFlash = 3;
+
+        // UNDYING: the first time the executioner is destroyed, it collapses and rises again
+        if (health <= 0 && design == EXECUTIONER && !revived) {
+            health = 1;
+            revived = true;
+            riseTimer = RISE_TICKS;
+            cancelMove();
+            spikeLanes = new int[0];
+            SoundManager.get().playBoss(SoundManager.Sfx.WARNING, design);
+            return;
+        }
 
         if (health <= 0) {
             health = 0;
             if (deathTick < 0) {
-                deathTick = tick;               // the golem starts to crumble from here
+                deathTick = tick;               // the golem and the executioner start to crumble from here
             }
         }
     }
@@ -1010,7 +1477,7 @@ public class Boss {
 
     /** True while arriving, while faded out by a blink, or once defeated. */
     public boolean isInvulnerable() {
-        return entering || health <= 0 || (move == Move.BLINK && alpha < 0.6);
+        return entering || health <= 0 || riseTimer > 0 || (move == Move.BLINK && alpha < 0.6);
     }
 
     /** Where the boss normally sits (it leaves this spot only to charge). */

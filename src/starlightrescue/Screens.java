@@ -63,6 +63,7 @@ final class Screens {
             case GAME_OVER:         drawGameplay(g); drawGameOver(g); break;
             case MISSION_COMPLETE:  drawGameplay(g); drawMissionComplete(g); break;
             case VICTORY:           drawVictory(g); break;
+            case WARP:              WormholeWarp.draw(g, game.warpTick, game.previewPlayer, game.background); break;
             case ACHIEVEMENTS:      drawAchievements(g); break;
             default:                break;
         }
@@ -323,6 +324,10 @@ final class Screens {
         UI.center(g, "Level " + game.hangar.playerLevel() + "  ·  " + game.hangar.purchases() + " of "
                      + Upgrades.totalSteps() + " upgrades", 150, 496);
 
+        // The level bar and the quest for the next level
+        drawLevelBar(g, 60, 504, 180, 5, game.hangar, game.frame);
+        drawQuestLine(g, game.hangar, 150, 524);
+
         // Buttons
         menuButton(g, GamePanel.PLAY_BUTTON, UI.Icon.PLAY, "PLAY", null, UI.CYAN);
         menuButton(g, GamePanel.HANGAR_BUTTON, UI.Icon.WRENCH, "HANGAR", fmt(game.hangar.getCredits()), UI.GOLD);
@@ -525,7 +530,7 @@ final class Screens {
 
         modeCard(g, GamePanel.ADVENTURE_BUTTON, UI.Icon.PLANET, "Adventure", UI.CYAN,
             "The full story. Follow the signal, find her, and bring her home.",
-            new String[]{"Four missions, four bosses", "Story scenes between missions", "Upgrade between missions"},
+            new String[]{"Four missions, five bosses", "Story scenes between missions", "Upgrade between missions"},
             "adventure", "STORY");
 
         modeCard(g, GamePanel.LEVEL_BUTTON, UI.Icon.TARGET, "Level", UI.GOLD,
@@ -858,6 +863,7 @@ final class Screens {
         keyRow(g, 70, 296, new String[]{"Space"}, "Hold to shoot");
         keyRow(g, 70, 328, new String[]{"R"}, "Reload early");
         keyRow(g, 70, 360, new String[]{"1-5"}, "Buy from the quick shop, or hire an ally");
+        keyRow(g, 70, 392, new String[]{"C"}, "Switch max weapon (Cannons maxed)");
 
         helpHeading(g, "Everything else", 450, 156);
         keyRow(g, 450, 168, new String[]{"P"}, "Pause");
@@ -1360,49 +1366,30 @@ final class Screens {
         return x + 3 + UI.width(g, label);
     }
 
-    /** The left panel: your ship on a hologram pad, its stats and its condition. */
+    /** The left panel: your ship docked onboard (see HangarBay), its stats and its condition. */
     private void drawShipBay(Graphics2D g) {
 
         Upgrades ship = game.hangar;
-        int t = game.frame;
         int cx = 175;
 
         UI.glass(g, 16, 72, 318, 450, 20, UI.CYAN);
 
-        // Hologram pad
-        g.setPaint(new RadialGradientPaint(new Point2D.Float(cx, 196), 120,
-            new float[]{0f, 1f}, new Color[]{UI.alpha(UI.CYAN, 60), UI.alpha(UI.CYAN, 0)}));
-        g.fillOval(cx - 130, 110, 260, 140);
-
-        g.setStroke(new BasicStroke(1.5f));
-        for (int i = 0; i < 3; i++) {
-            int rw = 200 - i * 50;
-            g.setColor(UI.alpha(UI.CYAN, 110 - i * 25));
-            g.drawOval(cx - rw / 2, 204 - rw / 10, rw, rw / 5);
-        }
-
-        // Scan line sweeping over the ship
-        int scan = 112 + (int) ((Math.sin(t * 0.03) + 1) * 44);
-        g.setPaint(new GradientPaint(cx - 90, 0, UI.alpha(UI.CYAN, 0), cx, 0, UI.alpha(UI.CYAN, 70), true));
-        g.fillRect(cx - 90, scan, 180, 2);
-
-        Graphics2D sg = (Graphics2D) g.create();
-        sg.translate(cx, 156 + Math.sin(t * 0.05) * 4);
-        sg.scale(2.5, 2.5);
-        game.previewPlayer.placeAt(-30, -20);
-        game.previewPlayer.draw(sg);
-        sg.dispose();
+        // The ship in its bay, with the robot arms that fit your upgrades (below the ship tabs, if they show)
+        game.bay.setUnderTabs(game.hangarFromMenu);
+        game.bay.draw(g, game.previewPlayer);
 
         g.setFont(UI.bold(17f));
         g.setColor(Color.WHITE);
-        UI.center(g, capitalize(ship.getShipClass()) + " class", cx, 252);
+        UI.center(g, capitalize(ship.getShipClass()) + " class", cx, 246);
 
-        UI.bar(g, 40, 262, 270, 7, ship.purchases() / (double) Upgrades.totalSteps(), UI.CYAN, UI.VIOLET, null);
+        // The level bar, then the level and upgrades, then the quest for the next level
+        drawLevelBar(g, 40, 255, 270, 7, ship, game.frame);
         g.setFont(UI.plain(11f));
         g.setColor(UI.MUTED);
-        UI.center(g, "Level " + ship.playerLevel() + "  ·  " + ship.purchases() + " of " + Upgrades.totalSteps()
-                     + " upgrades  ·  " + (ship.xpToNextLevel() > 0 ? ship.xpToNextLevel() + " XP to go" : "top level"),
-                  cx, 286);
+        String xp = ship.isTopLevel() ? "top level" : (ship.xpFull() ? "XP full" : ship.xpToNextLevel() + " XP to go");
+        UI.center(g, "Level " + ship.playerLevel() + "  ·  " + xp + "  ·  " + ship.purchases() + " of "
+                     + Upgrades.totalSteps() + " upgrades", cx, 275);
+        drawQuestLine(g, ship, cx, 291);
 
         // Stats
         int volley = ship.getBulletsPerVolley() * ship.getBulletDamage();
@@ -1588,8 +1575,16 @@ final class Screens {
         g.setColor(maxed ? UI.GOLD : UI.mix(accent, Color.WHITE, 0.45));
         paragraph(g, ship.nextText(track), r.x + 16, r.y + 152, r.width - 32, 15);
 
-        // Buy
-        if (maxed) {
+        // Buy (a maxed Cannons card switches the max weapon instead)
+        if (maxed && track == Upgrades.CANNONS) {
+
+            UI.button(g, buy, "", UI.GOLD, hover(buy), true, game.frame);
+            g.setFont(UI.bold(12f));
+            g.setColor(Color.WHITE);
+            g.drawString("SWITCH", buy.x + 14, buy.y + 22);
+            UI.keycap(g, "C", buy.x + buy.width - 32, buy.y + 7);
+
+        } else if (maxed) {
 
             UI.button(g, buy, "MAXED", UI.GOLD, false, false, game.frame);
 
@@ -1726,6 +1721,15 @@ final class Screens {
             drawLaserBeam(world);
         }
 
+        // The max weapons: the Starfall Lance's beam and charge, and the Omega orbs' shockwaves
+        drawShockwaves(world);
+        if (game.lanceFlash > 0) {
+            drawLance(world);
+        }
+        if (game.lanceCharge > GamePanel.LANCE_TAP && game.currentState == GamePanel.GameState.PLAYING) {
+            drawLanceCharge(world);
+        }
+
         for (BossBullet shot : game.enemyBullets) {
             shot.draw(world);
         }
@@ -1766,17 +1770,98 @@ final class Screens {
 
         drawDamageEffects(g);
         drawTopHud(g);
+        drawQuestTracker(g);
         drawAbilities(g);
         drawBottomHud(g);
 
         if (game.currentState != GamePanel.GameState.PAUSED) {
-            drawBanner(g);
+            if (game.warningTimer <= 0) {
+                drawBanner(g);              // (it waits until a boss's warning has gone)
+            }
             drawBossWarning(g);
         }
 
         drawMoveWarning(g);
         drawRadio(g);
         drawToasts(g);
+    }
+
+    /** The Omega orbs' shockwaves: golden rings that grow and fade. */
+    private void drawShockwaves(Graphics2D g) {
+
+        for (double[] wave : game.shockwaves) {
+            double age = wave[2];
+            double r = 12 + age * 3.4;
+            int alpha = (int) Math.max(0, 230 - age * 10);
+            g.setPaint(new RadialGradientPaint(new Point2D.Double(wave[0], wave[1]), (float) r,
+                new float[]{0f, 0.7f, 1f},
+                new Color[]{new Color(255, 205, 70, 0), new Color(255, 205, 70, alpha / 4), new Color(255, 205, 70, 0)}));
+            g.fill(new java.awt.geom.Ellipse2D.Double(wave[0] - r, wave[1] - r, r * 2, r * 2));
+            g.setStroke(new BasicStroke((float) Math.max(1, 5 - age * 0.18)));
+            g.setColor(new Color(255, 220, 110, alpha));
+            g.draw(new java.awt.geom.Ellipse2D.Double(wave[0] - r, wave[1] - r, r * 2, r * 2));
+        }
+        g.setStroke(new BasicStroke(1f));
+    }
+
+    /** The Starfall Lance's beam, right across the screen, fading out after it fires. */
+    private void drawLance(Graphics2D g) {
+
+        double fade = game.lanceFlash / (double) GamePanel.LANCE_FLASH;
+        int x0 = game.lanceStartX;
+        int y = game.lanceY;
+        int half = game.lanceHalf;
+        int w = W - x0;
+
+        g.setColor(new Color(255, 180, 60, (int) (110 * fade)));
+        g.fillRect(x0, y - (int) (half * 1.9), w, (int) (half * 3.8));
+        g.setPaint(new GradientPaint(x0, 0, new Color(255, 225, 120, (int) (235 * fade)), W, 0, new Color(255, 200, 90, (int) (170 * fade))));
+        g.fillRect(x0, y - half, w, half * 2);
+        g.setColor(new Color(255, 255, 240, (int) (255 * fade)));
+        int core = Math.max(3, (int) (half * 0.4));
+        g.fillRect(x0, y - core, w, core * 2);
+
+        float flare = (float) (half * 1.8 + 10);
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(x0, y), flare, new float[]{0f, 1f},
+            new Color[]{new Color(255, 255, 255, (int) (240 * fade)), new Color(255, 230, 150, 0)}));
+        g.fill(new java.awt.geom.Ellipse2D.Float(x0 - flare, y - flare, flare * 2, flare * 2));
+    }
+
+    /** The Starfall Lance charging: a growing light at the ship's nose, sparks drawn into it, and a charge bar. */
+    private void drawLanceCharge(Graphics2D g) {
+
+        double power = Math.min(1.0, game.lanceCharge / (double) GamePanel.LANCE_FULL);
+        int nx = game.player.getBulletX();
+        int ny = game.player.getBulletY();
+        float r = (float) (6 + 18 * power);
+        boolean full = power >= 1.0;
+
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(nx, ny), r * 2.2f, new float[]{0f, 1f},
+            new Color[]{new Color(255, 215, 90, full ? 230 : 180), new Color(255, 215, 90, 0)}));
+        g.fill(new java.awt.geom.Ellipse2D.Float(nx - r * 2.2f, ny - r * 2.2f, r * 4.4f, r * 4.4f));
+        g.setColor(new Color(255, 250, 225));
+        g.fill(new java.awt.geom.Ellipse2D.Float(nx - r * 0.45f, ny - r * 0.45f, r * 0.9f, r * 0.9f));
+
+        g.setStroke(new BasicStroke(1.5f));
+        for (int k = 0; k < 10; k++) {
+            double a = k * Math.PI / 5 + game.frame * 0.15;
+            double pull = (game.frame * 3 + k * 7) % 30 / 30.0;
+            double outer = 46 - pull * 26;
+            g.setColor(new Color(255, 220, 120, (int) (200 * (1 - pull))));
+            g.drawLine((int) (nx + Math.cos(a) * outer), (int) (ny + Math.sin(a) * outer * 0.75),
+                       (int) (nx + Math.cos(a) * (outer - 10)), (int) (ny + Math.sin(a) * (outer - 10) * 0.75));
+        }
+
+        // The charge bar above the ship (it flashes when full)
+        Rectangle ship = game.player.getBounds();
+        int bw = 56;
+        int bx = ship.x + ship.width / 2 - bw / 2;
+        int by = ship.y - 14;
+        g.setColor(new Color(0, 0, 0, 150));
+        g.fillRoundRect(bx, by, bw, 6, 6, 6);
+        g.setColor(full && (game.frame / 4) % 2 == 0 ? Color.WHITE : UI.GOLD);
+        g.fillRoundRect(bx, by, (int) (bw * power), 6, 6, 6);
+        g.setStroke(new BasicStroke(1f));
     }
 
     /**
@@ -1928,6 +2013,9 @@ final class Screens {
         g.setColor(UI.GOLD);
         g.drawString(fmt(game.hangar.getCredits()), 152, 48);
 
+        // The level bar: the XP earned towards the next level
+        drawLevelBar(g, 24, 53, 226, 4, game.hangar, game.frame);
+
         drawObjective(g);
 
         // Lives
@@ -1945,6 +2033,96 @@ final class Screens {
             g.setColor(c);
             g.fillRoundRect(654 + i * 16, 44, 12, 7, 7, 7);
         }
+    }
+
+    /**
+     * The level bar: how much of the next level's XP is earned. Once the XP is all there
+     * but the quest is not done, it turns orange and pulses. At the top level it stays full.
+     */
+    private static void drawLevelBar(Graphics2D g, int x, int y, int w, int h, Upgrades ship, int tick) {
+
+        Color c1 = new Color(255, 170, 40);
+        Color c2 = UI.GOLD;
+
+        if (ship.xpFull() && !ship.questDone()) {
+            int pulse = (int) (70 + 60 * Math.sin(tick * 0.12));
+            g.setColor(UI.alpha(UI.ORANGE, pulse));
+            g.fillRoundRect(x - 2, y - 2, w + 4, h + 4, h + 4, h + 4);
+            c1 = UI.ORANGE;
+            c2 = new Color(255, 110, 50);
+        }
+
+        UI.bar(g, x, y, w, h, ship.levelProgress(), c1, c2, null);
+    }
+
+    /** The quest for the next level in one line, centred on cx (green once it is done). */
+    private static void drawQuestLine(Graphics2D g, Upgrades ship, int cx, int y) {
+
+        Quest quest = ship.currentQuest();
+
+        if (quest == null) {
+            g.setFont(UI.bold(11f));
+            g.setColor(UI.GOLD);
+            UI.center(g, "Every level reached", cx, y);
+            return;
+        }
+
+        g.setFont(UI.bold(11f));
+
+        if (ship.questDone()) {
+            g.setColor(UI.GREEN);
+            UI.center(g, "Quest done: " + quest.text, cx, y);
+        } else {
+            g.setColor(UI.GOLD);
+            UI.center(g, "Quest: " + quest.text + "  " + ship.getQuestProgress() + "/" + quest.target, cx, y);
+        }
+    }
+
+    /**
+     * The current quest, under the top bar: what it asks for and how far you are.
+     * It fades out of the way while your ship flies behind it. Hidden at the top level.
+     */
+    private void drawQuestTracker(Graphics2D g) {
+
+        Upgrades ship = game.hangar;
+        Quest quest = ship.currentQuest();
+
+        if (quest == null) {
+            return;
+        }
+
+        int x = 14;
+        int y = 66;
+        int w = 240;
+        int h = 40;
+        boolean done = ship.questDone();
+        Color accent = done ? UI.GREEN : UI.GOLD;
+
+        Composite old = g.getComposite();
+        if (game.player.getBounds().intersects(new Rectangle(x - 6, y - 6, w + 12, h + 12))) {
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.3f));
+        }
+
+        UI.glass(g, x, y, w, h, 12, accent);
+        UI.icon(g, done ? UI.Icon.STAR : UI.Icon.TARGET, x + 14, y + 14, 12, accent);
+
+        g.setFont(UI.bold(10f));
+        g.setColor(accent);
+        g.drawString("QUEST FOR LEVEL " + (ship.playerLevel() + 1) + (done ? "  ·  DONE" : ""), x + 26, y + 17);
+
+        g.setFont(UI.bold(11f));
+        g.setColor(Color.WHITE);
+        UI.right(g, Math.min(ship.getQuestProgress(), quest.target) + " / " + quest.target, x + w - 10, y + 17);
+
+        g.setFont(UI.plain(11f));
+        g.setColor(UI.TEXT);
+        String text = done ? "Earn " + ship.xpToNextLevel() + " more XP to level up" : quest.text;
+        g.drawString(text, x + 10, y + 31);
+
+        UI.bar(g, x + 10, y + 34, w - 20, 3, ship.getQuestProgress() / (double) quest.target,
+               accent, done ? UI.GREEN : UI.ORANGE, null);
+
+        g.setComposite(old);
     }
 
     private void hudLabel(Graphics2D g, String text, int x, int y) {
@@ -1975,6 +2153,12 @@ final class Screens {
             g.setColor(new Color(255, 255, 255, 120));
             g.fillRect(barX + barW / 3, 31, 2, 15);
             g.fillRect(barX + barW * 2 / 3, 31, 2, 15);
+
+            // Its energy shield (against a strong ship): a cyan bar under the health bar
+            if (boss.getMaxShield() > 0) {
+                UI.bar(g, barX, 49, barW, 4, boss.getShield() / (double) boss.getMaxShield(),
+                       new Color(60, 170, 255), UI.CYAN, null);
+            }
 
             if (!game.guardians.isEmpty()) {
                 UI.icon(g, UI.Icon.SHIELD, barX + barW + 16, 38, 14, UI.CYAN);
@@ -2080,7 +2264,8 @@ final class Screens {
             c2 = c;
         }
 
-        hudLabel(g, "Ammo", 20, 563);
+        // With CANNONS maxed, the label names the max weapon in use (C switches it)
+        hudLabel(g, game.upgrades.maxWeaponReady() ? game.upgrades.getMaxWeapon().title : "Ammo", 20, 563);
 
         boolean low = game.reloadTimer == 0 && game.rapidTimer == 0 && game.ammo <= max / 4;
 
@@ -2267,6 +2452,11 @@ final class Screens {
             g.setFont(UI.bold(13f));
             g.setColor(UI.alpha(new Color(255, 190, 190), a));
             UI.center(g, capitalizeWords(game.boss.getName()) + " approaching", W / 2, 226);
+
+            // What it brings this time (it is scaled to your ship)
+            g.setFont(UI.bold(11f));
+            g.setColor(UI.alpha(UI.CYAN, a));
+            UI.center(g, game.boss.abilityText(), W / 2, 244);
         }
     }
 
@@ -2320,31 +2510,41 @@ final class Screens {
             accent = UI.MAGENTA;
         }
 
+        // A long message gets a second line: the panel grows upward to fit it
         rg.setFont(UI.plain(13f));
-        int textWidth = Math.min(420, UI.width(rg, game.radioText));
-        int width = Math.max(220, textWidth + 74);
+        List<String> lines = wrap(rg, game.radioText, 420);
+        int shown = Math.min(2, lines.size());
+        int lift = (shown > 1) ? 18 : 0;
+        int textWidth = 0;
+        for (int i = 0; i < shown; i++) {
+            textWidth = Math.max(textWidth, UI.width(rg, lines.get(i)));
+        }
+        int width = Math.max(220, Math.min(420, textWidth) + 74);
 
-        UI.glass(rg, 16, 476, width, 56, 16, accent);
+        UI.glass(rg, 16, 476 - lift, width, 56 + lift, 16, accent);
 
         // Speaker avatar with a little signal wave
+        int mid = 504 - lift / 2;
         rg.setColor(UI.alpha(accent, 60));
-        rg.fillOval(26, 488, 32, 32);
+        rg.fillOval(26, mid - 16, 32, 32);
         rg.setStroke(new BasicStroke(1.6f));
         rg.setColor(accent);
 
         for (int i = 0; i < 5; i++) {
             int h = 4 + (int) (Math.abs(Math.sin(game.frame * 0.25 + i)) * 10);
-            rg.drawLine(33 + i * 4, 504 - h / 2, 33 + i * 4, 504 + h / 2);
+            rg.drawLine(33 + i * 4, mid - h / 2, 33 + i * 4, mid + h / 2);
         }
 
         rg.setFont(UI.bold(11f));
         rg.setColor(accent);
-        UI.trackedLeft(rg, game.radioSpeaker, 68, 498, 1.5f);
+        UI.trackedLeft(rg, game.radioSpeaker, 68, 498 - lift, 1.5f);
 
         rg.setFont(UI.plain(13f));
         rg.setColor(Color.WHITE);
-        List<String> lines = wrap(rg, game.radioText, 420);
-        rg.drawString(lines.isEmpty() ? "" : lines.get(0) + (lines.size() > 1 ? "..." : ""), 68, 518);
+        for (int i = 0; i < shown; i++) {
+            String line = lines.get(i) + ((i == shown - 1 && lines.size() > shown) ? "..." : "");
+            rg.drawString(line, 68, 518 - lift + i * 18);
+        }
 
         rg.dispose();
     }

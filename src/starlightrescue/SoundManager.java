@@ -36,9 +36,13 @@ public final class SoundManager {
     }
 
     // OPENING plays on the opening screen, the story pages and the ending; MENU on every menu.
-    // Each battle mode has its own track: LEVEL missions by difficulty, then Adventure and Hardcore.
+    // LEVEL missions have a track for each difficulty, each Adventure mission has its own
+    // (EARTH_DEFENSE, DEEP_SPACE, MOTHERSHIP, WORMHOLE), and Hardcore has one.
     // BOSS_FIGHT takes over in Adventure and Hardcore while a boss is on screen.
-    public enum Track { NONE, OPENING, MENU, LEVEL_EASY, LEVEL_MODERATE, LEVEL_HARD, ADVENTURE, HARDCORE, BOSS_FIGHT }
+    public enum Track {
+        NONE, OPENING, MENU, LEVEL_EASY, LEVEL_MODERATE, LEVEL_HARD,
+        EARTH_DEFENSE, DEEP_SPACE, MOTHERSHIP, WORMHOLE, HARDCORE, BOSS_FIGHT
+    }
 
     private static final int CHUNK = 512;                 // samples mixed per step
     private static final int MAX_SAME_SOUND = 3;          // limit overlapping copies of one effect
@@ -131,7 +135,7 @@ public final class SoundManager {
             return;
         }
 
-        boolean beam = shot.gun == ShotSound.Gun.BEAM;
+        boolean beam = shot.gun == ShotSound.Gun.BEAM || shot.gun == ShotSound.Gun.CANNON_BEAM;
         short[] data;
 
         if (beam && customSfx[Sfx.LASER.ordinal()]) {

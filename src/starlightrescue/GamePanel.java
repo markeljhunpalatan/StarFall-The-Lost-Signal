@@ -21,6 +21,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.EnumMap;
 import java.util.Properties;
 import java.util.Random;
@@ -122,7 +123,8 @@ public class GamePanel extends JPanel {
         PAUSED,
         GAME_OVER,
         MISSION_COMPLETE,
-        VICTORY
+        VICTORY,
+        WARP            // the flight through the wormhole, after the Wormhole mission (see WormholeWarp)
     }
 
     enum GameMode {
@@ -278,6 +280,7 @@ public class GamePanel extends JPanel {
     Boss boss;
     final Boss storyBoss = new Boss(2, 100, "", 0);   // only used to draw story art
     final Player previewPlayer = new Player();        // the ship in the hangar and menu
+    final transient HangarBay bay = new HangarBay();  // the ship's bay on the upgrade screen, with its robot arms
     final ArrayList<Guardian> guardians = new ArrayList<>();
 
     final ArrayList<Bullet> bullets = new ArrayList<>();
@@ -344,6 +347,7 @@ public class GamePanel extends JPanel {
     int laserTimer = 0;                 // beam time left
     int laserFlash = 0;                 // the beam is drawn while this is above 0
     int laserSoundTimer = 0;            // stops the laser sound from playing on every pulse
+    int cannonBeamSoundTimer = 0;       // the same, for the built-in laser cannon's beam
     int laserBeamCount = 1;             // how many beams the last pulse fired (for drawing)
 
     // The hired ally: at most one at a time, and it stays down once destroyed
@@ -370,6 +374,9 @@ public class GamePanel extends JPanel {
     int ambushSpawnsLeft = 0;           // aliens still to come out of the trap
     int ambushWaveSize = 0;             // how many the trap held this mission (set by the spawn amount)
     int ambushSpawnCooldown = 0;        // ticks until the next one
+    boolean finalWaveSprung = false;    // the last push near the end of a mission has started
+    int finalWaveLeft = 0;              // aliens still to come in it
+    int finalWaveCooldown = 0;          // ticks until the next one
 
     // Hangar / upgrade station
     String upgradeMessage = "";
@@ -427,6 +434,7 @@ public class GamePanel extends JPanel {
     static final double MAX_LEVEL_SPEED_BOOST = 1.15;   // 15% faster aliens and asteroids
     static final double MAX_LEVEL_BOSS_HEALTH = 1.3;    // 30% more hits to beat a boss
     boolean maxLevelRun = false;                        // this mission is at the top player level
+    double bossPower = 0.5;                             // the ship's power when the current boss arrived
     SpawnRate spawnRate = SpawnRate.NORMAL;      // how many aliens, ambush aliens and asteroids spawn (Settings)
     int enemiesSpawned = 0;                      // aliens spawned this run (for the tests)
     double zigzagAt = 0.4;
@@ -517,10 +525,16 @@ public class GamePanel extends JPanel {
                 previewPlayer.animate();
             }
 
+            if (currentState == GameState.UPGRADE) {
+                bay.update();                       // the robot arms in the ship's bay
+            }
+
             if (currentState == GameState.STORY) {
                 storyChars += 0.9;
             } else if (currentState == GameState.PLAYING) {
                 updateGame();
+            } else if (currentState == GameState.WARP) {
+                updateWarp();
             } else if (currentState == GameState.GAME_OVER) {
                 gameOverTimer++;
             }
@@ -559,7 +573,12 @@ public class GamePanel extends JPanel {
                 return SoundManager.Track.BOSS_FIGHT;
             }
 
-            return (selectedMode == GameMode.ADVENTURE) ? SoundManager.Track.ADVENTURE : SoundManager.Track.HARDCORE;
+            if (selectedMode == GameMode.HARDCORE) {
+                return SoundManager.Track.HARDCORE;
+            }
+
+            // Each Adventure mission has its own music (see Mission.CAMPAIGN)
+            return (mission != null && mission.music != null) ? mission.music : SoundManager.Track.EARTH_DEFENSE;
         }
 
         switch (selectedDifficulty) {
@@ -589,7 +608,8 @@ public class GamePanel extends JPanel {
             case OPENING:
             case STORY:
             case VICTORY:
-                track = SoundManager.Track.OPENING;   // the opening screen, story pages and ending
+            case WARP:
+                track = SoundManager.Track.OPENING;   // the opening screen, story pages, the wormhole flight and the ending
                 break;
 
             default:
@@ -695,6 +715,7 @@ public class GamePanel extends JPanel {
         laserTimer = 0;
         laserFlash = 0;
         laserSoundTimer = 0;
+        cannonBeamSoundTimer = 0;
         ally = null;
 
         beamCooldown = 0;
@@ -707,10 +728,17 @@ public class GamePanel extends JPanel {
         explodersDestroyed = 0;
         orbKills = 0;
 
+        lanceCharge = 0;
+        lanceFlash = 0;
+        shockwaves.clear();
+
         ambushSprung = false;
         ambushSpawnsLeft = 0;
         ambushWaveSize = 0;
         ambushSpawnCooldown = 0;
+        finalWaveSprung = false;
+        finalWaveLeft = 0;
+        finalWaveCooldown = 0;
     }
 
     /** Switches to the upgrade profile of a mode. Undo can't cross profiles, so its history is cleared. */
@@ -938,6 +966,12 @@ public class GamePanel extends JPanel {
 
             final int finished = missionIndex;
 
+            // After the last mission: the flight through the wormhole first, then the ending
+            if (finished + 1 >= Mission.CAMPAIGN.length) {
+                startWarp(() -> showStory(Story.AFTER_MISSION[finished], this::showVictory));
+                return;
+            }
+
             showStory(Story.AFTER_MISSION[finished], () -> {
                 if (finished + 1 < Mission.CAMPAIGN.length) {
                     final int next = finished + 1;
@@ -958,6 +992,55 @@ public class GamePanel extends JPanel {
         }
     }
 
+    // ---------- The flight through the wormhole ----------
+
+    int warpTick = 0;
+    transient Runnable warpOnFinish;
+
+    /** Plays the flight through the wormhole (see WormholeWarp), then runs onFinish. */
+    void startWarp(Runnable onFinish) {
+
+        previewPlayer.setLoadout(hangar);       // the ship you flew, towing her pod
+        warpTick = 0;
+        warpOnFinish = onFinish;
+        shooting = false;
+        currentState = GameState.WARP;
+        sound.play(SoundManager.Sfx.CHARGE);
+    }
+
+    void updateWarp() {
+
+        warpTick++;
+        previewPlayer.animate();
+
+        if (warpTick == WormholeWarp.APPROACH_END) {
+            sound.play(SoundManager.Sfx.BOOST);         // into the tunnel
+        } else if (warpTick == WormholeWarp.TUNNEL_END) {
+            sound.play(SoundManager.Sfx.TELEPORT);      // the light at the end
+        }
+
+        if (warpTick >= WormholeWarp.TOTAL) {
+            finishWarp();
+        }
+    }
+
+    /** Ends the flight (at its end, or when skipped) and goes on to what comes next. */
+    void finishWarp() {
+
+        if (currentState != GameState.WARP) {
+            return;
+        }
+
+        Runnable next = warpOnFinish;
+        warpOnFinish = null;
+
+        if (next != null) {
+            next.run();
+        } else {
+            returnToMenu();
+        }
+    }
+
     // ---------- Hangar / upgrade station ----------
 
     /**
@@ -971,6 +1054,7 @@ public class GamePanel extends JPanel {
         upgradeMessage = "";
         upgradeMessageTimer = 0;
         undoStack.clear();
+        bay.reset();
 
         shooting = false;
         bullets.clear();
@@ -1051,6 +1135,7 @@ public class GamePanel extends JPanel {
 
             previewPlayer.setLoadout(hangar);
             sound.play(SoundManager.Sfx.UPGRADE);
+            bay.install(track, hangar.ownedName(track));     // the arms fit the new part
 
             if (!wasPhase2 && hangar.isPhase2(track) && !hangar.isMaxed(track)) {
                 showUpgradeMessage(Upgrades.NAMES[track] + " MAXED - " + Upgrades.PHASE2_NAMES[track] + " UNLOCKED!", true);
@@ -1102,6 +1187,7 @@ public class GamePanel extends JPanel {
 
         previewPlayer.setLoadout(hangar);
         sound.play(SoundManager.Sfx.REFUND);
+        bay.remove(-1, "ALL UPGRADES");
         showUpgradeMessage("ADVENTURE UPGRADES RESET  +" + refund + " CREDITS", true);
         saveProgress();
     }
@@ -1129,6 +1215,7 @@ public class GamePanel extends JPanel {
 
         previewPlayer.setLoadout(hangar);
         sound.play(SoundManager.Sfx.REFUND);
+        bay.remove(track, name);                             // the arms take the part off
         showUpgradeMessage(name + " REFUNDED  +" + value + " CREDITS", true);
         saveProgress();
     }
@@ -1152,6 +1239,7 @@ public class GamePanel extends JPanel {
         pushUndo("REPAIRS");
         hangar.addCredits(-cost);
         parts.reset();
+        bay.repair();                                        // the arms patch up the hull
 
         sound.play(SoundManager.Sfx.UPGRADE);
         showUpgradeMessage("SHIP FULLY REPAIRED  -" + cost + " CREDITS", true);
@@ -1385,22 +1473,54 @@ public class GamePanel extends JPanel {
     }
 
     /**
-     * Experience for playing. Reaching a new player level announces itself and saves
-     * the profile (XP is saved then, rather than on every kill).
+     * Experience for playing. It fills the level bar; the level only goes up once the
+     * bar is full AND the level's quest is done (see Quest). A new level announces
+     * itself and saves the profile (XP is saved then, rather than on every kill).
      */
     void gainXp(int amount) {
 
-        int before = hangar.playerLevel();
+        boolean wasFull = hangar.xpFull();
         hangar.addXp(amount);
-        int after = hangar.playerLevel();
 
-        if (after > before) {
-            bannerTitle = "LEVEL " + after;
-            bannerSubtitle = "NEW UPGRADES CAN NOW BE BOUGHT";
+        if (!checkLevelUp() && !wasFull && hangar.xpFull()) {
+
+            // The bar has just filled, but the quest is not done yet: say what is still needed
+            bannerTitle = "LEVEL " + (hangar.playerLevel() + 1) + " IS READY";
+            bannerSubtitle = "FINISH THE QUEST: " + hangar.currentQuest().text.toUpperCase();
             bannerTimer = BANNER_TIME;
-            sound.play(SoundManager.Sfx.UPGRADE);
+        }
+    }
+
+    /** Something a quest may count has happened (see Quest). */
+    void questEvent(Quest.Goal goal, int amount) {
+
+        if (!hangar.questEvent(goal, amount)) {
+            return;
+        }
+
+        // The quest is done: the level comes now if the bar is full, or as soon as it fills
+        if (!checkLevelUp()) {
+            bannerTitle = "QUEST COMPLETE";
+            bannerSubtitle = "EARN " + hangar.xpToNextLevel() + " MORE XP TO REACH LEVEL " + (hangar.playerLevel() + 1);
+            bannerTimer = BANNER_TIME;
+            sound.play(SoundManager.Sfx.PICKUP);
             saveProgress();
         }
+    }
+
+    /** Goes up a level if the level bar is full and the quest is done. Returns true if it did. */
+    boolean checkLevelUp() {
+
+        if (!hangar.tryLevelUp()) {
+            return false;
+        }
+
+        bannerTitle = "LEVEL " + hangar.playerLevel();
+        bannerSubtitle = hangar.isTopLevel() ? "TOP LEVEL REACHED" : "NEW UPGRADES CAN NOW BE BOUGHT";
+        bannerTimer = BANNER_TIME;
+        sound.play(SoundManager.Sfx.UPGRADE);
+        saveProgress();
+        return true;
     }
 
     /** Unlocks an achievement once, saves it, and queues its pop-up. */
@@ -1507,12 +1627,21 @@ public class GamePanel extends JPanel {
                 shooting = true;
             } else if (currentState == GameState.OPENING) {
                 currentState = GameState.MENU;
+            } else if (currentState == GameState.WARP) {
+                finishWarp();
             }
         });
         bind("released SPACE", () -> shooting = false);
 
         // BOOST (needs ENGINES MK II)
         bind("pressed SHIFT", this::tryBoost);
+
+        // C = switch the max weapon (once CANNONS is fully upgraded), in battle or in the hangar
+        bind("pressed C", () -> {
+            if (currentState == GameState.PLAYING || currentState == GameState.UPGRADE) {
+                cycleMaxWeapon();
+            }
+        });
 
         // ENTER = confirm / continue,  ESC = back / pause / skip,  P = pause
         bind("pressed ENTER", this::handleConfirm);
@@ -1619,6 +1748,11 @@ public class GamePanel extends JPanel {
 
     void handleConfirm() {
 
+        if (currentState == GameState.WARP) {
+            finishWarp();                   // skips the flight through the wormhole
+            return;
+        }
+
         if (currentState != GameState.PLAYING && currentState != GameState.PAUSED) {
             sound.play(SoundManager.Sfx.CLICK);
         }
@@ -1677,6 +1811,11 @@ public class GamePanel extends JPanel {
     }
 
     void handleEscape() {
+
+        if (currentState == GameState.WARP) {
+            finishWarp();
+            return;
+        }
 
         switch (currentState) {
 
@@ -1799,6 +1938,12 @@ public class GamePanel extends JPanel {
 
     void handleClick(int x, int y) {
 
+        // A click skips the flight through the wormhole
+        if (currentState == GameState.WARP) {
+            finishWarp();
+            return;
+        }
+
         // Any click on the opening screen goes on to the menu
         if (currentState == GameState.OPENING) {
             sound.play(SoundManager.Sfx.CLICK);
@@ -1909,7 +2054,9 @@ public class GamePanel extends JPanel {
 
             case UPGRADE:
                 for (int i = 0; i < Upgrades.TRACKS; i++) {
-                    if (BUY_BUTTONS[i].contains(x, y)) {
+                    if (BUY_BUTTONS[i].contains(x, y) && i == Upgrades.CANNONS && hangar.isMaxed(i)) {
+                        cycleMaxWeapon();                    // a maxed Cannons card switches the max weapon
+                    } else if (BUY_BUTTONS[i].contains(x, y)) {
                         buyUpgrade(i);
                     } else if (SELL_BUTTONS[i].contains(x, y)) {
                         sellUpgrade(i);
@@ -2166,7 +2313,7 @@ public class GamePanel extends JPanel {
         if (shotCooldown > 0)       shotCooldown--;
         if (rapidTimer > 0)         rapidTimer--;
         if (shieldTimer > 0)        shieldTimer--;
-        if (bannerTimer > 0)        bannerTimer--;
+        if (bannerTimer > 0 && warningTimer == 0) bannerTimer--;   // a banner waits while a boss's warning shows
         if (warningTimer > 0)       warningTimer--;
         if (radioTimer > 0)         radioTimer--;
         if (pickupTimer > 0)        pickupTimer--;
@@ -2178,7 +2325,9 @@ public class GamePanel extends JPanel {
         if (boostCooldown > 0)      boostCooldown--;
         if (laserTimer > 0)         laserTimer--;
         if (laserFlash > 0)         laserFlash--;
+        if (lanceFlash > 0)         lanceFlash--;
         if (laserSoundTimer > 0)    laserSoundTimer--;
+        if (cannonBeamSoundTimer > 0) cannonBeamSoundTimer--;
         if (beamCooldown > 0)       beamCooldown--;
         if (overdriveTimer > 0)     overdriveTimer--;
         if (novaCooldown > 0)       novaCooldown--;
@@ -2237,8 +2386,17 @@ public class GamePanel extends JPanel {
             }
         }
 
+        // ----- The Starfall Lance (a max weapon): hold fire to charge, let go to fire -----
+        boolean lance = lanceMode() && laserTimer == 0;
+
+        if (lance) {
+            updateLance();
+        } else {
+            lanceCharge = 0;
+        }
+
         // ----- Player shooting (the magazine is limited) -----
-        if (shooting && bossDeathTimer == 0) {
+        if (shooting && bossDeathTimer == 0 && !lance) {
 
             if (laserTimer > 0) {
 
@@ -2263,10 +2421,18 @@ public class GamePanel extends JPanel {
                     }
                 }
 
-                // A fully upgraded cannon fires its laser cannon alongside the guns
+                // A fully upgraded cannon fires its laser cannon alongside the Omega Cannon or Nova Swarm
                 if (upgrades.isMaxed(Upgrades.CANNONS) && beamCooldown == 0) {
                     fireLaser(true);
                 }
+            }
+        }
+
+        // ----- The Omega orbs' shockwaves grow and fade -----
+        for (int i = shockwaves.size() - 1; i >= 0; i--) {
+            shockwaves.get(i)[2]++;
+            if (shockwaves.get(i)[2] > 22) {
+                shockwaves.remove(i);
             }
         }
 
@@ -2283,6 +2449,7 @@ public class GamePanel extends JPanel {
 
         // ----- ADVENTURE twist: the ambush wave -----
         updateAmbush();
+        updateFinalWave();
 
         // ----- Spawn enemies -----
         if (spawnCooldown > 0) {
@@ -2294,6 +2461,18 @@ public class GamePanel extends JPanel {
         if (spawnCooldown == 0 && !bossBusy) {
             enemies.add(createEnemy());
             enemiesSpawned++;
+
+            // As the mission goes on, aliens start coming in pairs and threes
+            double group = groupChance();
+            if (random.nextDouble() < group) {
+                enemies.add(createEnemy());
+                enemiesSpawned++;
+            }
+            if (random.nextDouble() < group * 0.4) {
+                enemies.add(createEnemy());
+                enemiesSpawned++;
+            }
+
             spawnCooldown = spawnInterval();
         }
 
@@ -2342,9 +2521,39 @@ public class GamePanel extends JPanel {
 
                 if (bulletBounds.intersects(enemy.getBounds())) {
 
+                    // An Omega orb goes through aliens (each one once); after its last one it bursts
+                    if (bullet.getWeapon() == Weapon.OMEGA) {
+
+                        if (bullet.hasPierced(enemy)) {
+                            continue;
+                        }
+
+                        int through = bullet.pierce(enemy);
+                        enemy.takeDamage(bullet.getDamage());
+                        impact(bullet);
+
+                        double ex = enemy.getCenterX();
+                        double ey = enemy.getCenterY();
+
+                        if (enemy.isDead()) {
+                            destroyEnemy(enemy, j);
+                        }
+
+                        if (through >= OMEGA_PIERCE) {
+                            omegaBurst(bullet, ex, ey);       // it bursts on its last alien
+                            used = true;
+                        }
+                        continue;
+                    }
+
                     used = true;
                     enemy.takeDamage(bullet.getDamage());
                     impact(bullet);
+
+                    // A Nova star splits in two when it hits an alien
+                    if (bullet.getWeapon() == Weapon.NOVA) {
+                        splitNovaStar(bullet, enemy);
+                    }
 
                     if (enemy.isDead()) {
                         destroyEnemy(enemy, j);
@@ -2358,7 +2567,7 @@ public class GamePanel extends JPanel {
 
                 if (shot.isDestroyable() && bulletBounds.intersects(shot.getBounds())) {
 
-                    used = true;
+                    used = bullet.getWeapon() != Weapon.OMEGA;      // an Omega orb ploughs through missiles too
                     enemyBullets.remove(j);
                     shotBurst(shot);
                     sound.play(SoundManager.Sfx.EXPLODE);
@@ -2469,10 +2678,11 @@ public class GamePanel extends JPanel {
 
         if (boss != null) {
 
-            Rectangle danger = boss.getDangerZone();
-
-            if (danger != null && playerBounds.intersects(danger)) {
-                hitPlayer();
+            for (Rectangle danger : boss.getDangerZones()) {
+                if (playerBounds.intersects(danger)) {
+                    hitPlayer();
+                    break;
+                }
             }
         }
     }
@@ -2505,13 +2715,29 @@ public class GamePanel extends JPanel {
         double bx = player.getBulletX();
         double by = player.getBulletY();
 
-        boolean omega = upgrades.omegaVolley();
+        // CANNONS fully upgraded: the player's pick of the three max weapons (see MaxWeapon)
+        boolean maxed = upgrades.maxWeaponReady();
+        MaxWeapon max = upgrades.getMaxWeapon();
+        ShotSound.Gun gunSound = ShotSound.gunFor(weapon);
+        int bonus = Upgrades.caliberBonus(caliber);
 
-        if (omega) {
+        if (maxed && max == MaxWeapon.OMEGA_CANNON) {
 
-            // The omega volley: CANNONS fully upgraded, so all four guns fire together
-            fireOmegaVolley(bx, by, caliber);
-            shotCooldown = shotDelay() * 2;   // a volley this big comes a little slower
+            // One big orb that goes through the aliens in its line, then bursts (see the bullet checks)
+            bullets.add(new Bullet(bx, by, 0, Weapon.OMEGA, Weapon.OMEGA.damage + bonus, 0));
+            gunSound = ShotSound.Gun.OMEGA;
+
+        } else if (maxed && max == MaxWeapon.NOVA_SWARM) {
+
+            fireNovaSwarm(bx, by, Weapon.NOVA.damage + bonus);
+            shotCooldown = (int) Math.round(shotDelay() * 1.5);     // five hunting stars come a little slower
+            gunSound = ShotSound.Gun.NOVA;
+
+        } else if (maxed && max == MaxWeapon.STARFALL_LANCE) {
+
+            // A quick tap of the lance: a small plasma shot (holding fire charges the lance instead)
+            bullets.add(new Bullet(bx, by, 0, Weapon.PLASMA, Weapon.PLASMA.damage + bonus, 0));
+            gunSound = ShotSound.Gun.PLASMA;
 
         } else if (weapon == Weapon.ARC) {
 
@@ -2531,7 +2757,7 @@ public class GamePanel extends JPanel {
             bullets.add(new Bullet(bx, by, 0, weapon, damage, 0));
         }
 
-        sound.playShot(shotFor(omega ? ShotSound.Gun.OMEGA : ShotSound.gunFor(weapon)));
+        sound.playShot(shotFor(gunSound));
         wearPart(ShipParts.CANNONS, ShipParts.WEAR_PER_VOLLEY);
 
         // Rapid fire = unlimited ammo. Otherwise every volley uses one round.
@@ -2545,21 +2771,264 @@ public class GamePanel extends JPanel {
         }
     }
 
+    // ---------- The max weapons (CANNONS fully upgraded, see MaxWeapon) ----------
+
+    static final int OMEGA_PIERCE = 4;              // aliens an Omega orb goes through before it bursts
+    static final int OMEGA_BLAST_RADIUS = 80;       // the size of its shockwave
+    static final int LANCE_TAP = 10;                // ticks: a shorter press is a tap (a small shot)
+    static final int LANCE_FULL = 70;               // ticks of holding fire for a full charge
+    static final int LANCE_COOLDOWN = 20;           // ticks after a lance before the next charge can start
+    static final int LANCE_FLASH = 18;              // ticks the beam stays on screen
+
+    int lanceCharge = 0;                            // how long fire has been held (the lance's charge)
+    int lanceFlash = 0;                             // the beam on screen, fading
+    int lanceY = 0;
+    int lanceStartX = 0;
+    int lanceHalf = 0;
+    double lancePower = 0;
+    final transient List<double[]> shockwaves = new ArrayList<>();   // the Omega orbs' shockwaves: x, y, age
+
+    /** True while the Starfall Lance is the max weapon in use. */
+    boolean lanceMode() {
+        return upgrades.maxWeaponReady() && upgrades.getMaxWeapon() == MaxWeapon.STARFALL_LANCE;
+    }
+
     /**
-     * The omega volley, fired once CANNONS is fully upgraded: a plasma bolt, two arc
-     * bolts, a fireball and three homing comets, all at the same time.
+     * The Nova Swarm: five stars in a fan, each sent after a different alien (the five
+     * nearest). The fan opens out to match: the top star goes after the highest alien,
+     * the bottom star after the lowest, so they don't cross. With fewer aliens about,
+     * some share a target.
      */
-    void fireOmegaVolley(double bx, double by, int caliber) {
+    void fireNovaSwarm(double bx, double by, int damage) {
 
-        int bonus = Upgrades.caliberBonus(caliber);
+        List<Enemy> targets = nearestAliens(bx, by, 5, null);
+        targets.sort((a, b) -> Integer.compare(a.getCenterY(), b.getCenterY()));
+        double[] spread = {-2.6, -1.3, 0, 1.3, 2.6};
 
-        bullets.add(new Bullet(bx, by, 0, Weapon.PLASMA, Weapon.PLASMA.damage + bonus, 0));
-        bullets.add(new Bullet(bx, by - 7, 0, Weapon.ARC, Weapon.ARC.damage + bonus, 0));
-        bullets.add(new Bullet(bx, by + 7, 0, Weapon.ARC, Weapon.ARC.damage + bonus, Math.PI));
-        bullets.add(new Bullet(bx + 6, by, 0, Weapon.FIREBALL, Weapon.FIREBALL.damage + bonus, 0));
-        bullets.add(new Bullet(bx, by - 8, -1.2, Weapon.COMET, Weapon.COMET.damage + bonus, 0));
-        bullets.add(new Bullet(bx, by, 0, Weapon.COMET, Weapon.COMET.damage + bonus, 0));
-        bullets.add(new Bullet(bx, by + 8, 1.2, Weapon.COMET, Weapon.COMET.damage + bonus, 0));
+        for (int i = 0; i < spread.length; i++) {
+            Bullet star = new Bullet(bx, by + spread[i] * 3, spread[i], Weapon.NOVA, damage, 0);
+            if (!targets.isEmpty()) {
+                star.setTarget(targets.get(i % targets.size()));
+            }
+            bullets.add(star);
+        }
+    }
+
+    /** Up to "count" aliens ahead of (x, y), nearest first, leaving one out (or none). */
+    List<Enemy> nearestAliens(double x, double y, int count, Enemy leaveOut) {
+
+        List<Enemy> list = new ArrayList<>();
+
+        for (Enemy enemy : enemies) {
+            if (enemy != leaveOut && !enemy.isDead() && enemy.getCenterX() > x - 10) {
+                list.add(enemy);
+            }
+        }
+
+        list.sort((a, b) -> Double.compare(distance(a.getCenterX(), a.getCenterY(), x, y),
+                                           distance(b.getCenterX(), b.getCenterY(), x, y)));
+        return new ArrayList<>(list.subList(0, Math.min(count, list.size())));
+    }
+
+    /** A Nova star has hit an alien: it splits into two smaller stars that go after the next nearest aliens. */
+    void splitNovaStar(Bullet star, Enemy hit) {
+
+        int damage = Math.max(1, Weapon.NOVA_SHARD.damage + Upgrades.caliberBonus(upgrades.getCaliberLevel()) / 2);
+        List<Enemy> next = nearestAliens(star.getX(), star.getY(), 2, hit);
+
+        for (int k = 0; k < 2; k++) {
+            Bullet shard = new Bullet(star.getX() + 8, star.getY(), (k == 0) ? -2.2 : 2.2, Weapon.NOVA_SHARD, damage, 0);
+            if (!next.isEmpty()) {
+                shard.setTarget(next.get(k % next.size()));
+            }
+            bullets.add(shard);
+        }
+    }
+
+    /** An Omega orb bursts where it is: a golden shockwave that hurts every alien, rock and guardian around it. */
+    void omegaBurst(Bullet orb) {
+        omegaBurst(orb, orb.getX(), orb.getY());
+    }
+
+    /** An Omega orb bursts with its shockwave centred on (cx, cy) (the last alien it went through). */
+    void omegaBurst(Bullet orb, double cx, double cy) {
+
+        int damage = orb.getDamage() / 2 + 6;
+
+        splashDamage(cx, cy, OMEGA_BLAST_RADIUS, damage);
+
+        for (int g = guardians.size() - 1; g >= 0; g--) {
+            Guardian guard = guardians.get(g);
+            if (distance(guard.getCenterX(), guard.getCenterY(), cx, cy) <= OMEGA_BLAST_RADIUS) {
+                guard.takeDamage(damage);
+                if (guard.isDead()) {
+                    guardianDestroyed(g);
+                }
+            }
+        }
+
+        shockwaves.add(new double[]{cx, cy, 0});
+        explosions.add(new Explosion(cx, cy, 1.3));
+        sound.play(SoundManager.Sfx.EXPLODE);
+        shakeTimer = Math.max(shakeTimer, 6);
+    }
+
+    /**
+     * The Starfall Lance, each tick: while fire is held (and the guns are ready) it charges;
+     * when fire is let go it fires: a quick tap fires a small shot, a charge fires the lance.
+     */
+    void updateLance() {
+
+        if (bossDeathTimer > 0) {
+            lanceCharge = 0;
+            return;
+        }
+
+        boolean canFire = rapidTimer > 0 || (reloadTimer == 0 && ammo > 0);
+
+        if (shooting && canFire && shotCooldown == 0) {
+
+            int before = lanceCharge;
+            lanceCharge = Math.min(LANCE_FULL, lanceCharge + (rapidTimer > 0 ? 2 : 1));   // rapid fire charges twice as fast
+
+            if (before <= LANCE_TAP && lanceCharge > LANCE_TAP) {
+                sound.play(SoundManager.Sfx.CHARGE);                 // a real charge has begun
+            }
+
+        } else if (!shooting && lanceCharge > 0) {
+
+            if (lanceCharge <= LANCE_TAP) {
+                fireWeapon();                                        // a tap: a small shot
+            } else {
+                fireLance(lanceCharge / (double) LANCE_FULL);
+            }
+            lanceCharge = 0;
+
+        } else if (shooting && !canFire && lanceCharge == 0 && emptyClickTimer == 0) {
+
+            sound.play(SoundManager.Sfx.EMPTY);
+            emptyClickTimer = 20;
+        }
+    }
+
+    /**
+     * The Starfall Lance fires: a beam from the ship right across the screen, thicker and
+     * stronger the longer it charged (power 0 - 1). It pierces everything it crosses.
+     */
+    void fireLance(double power) {
+
+        shotCooldown = LANCE_COOLDOWN;
+
+        // Badly damaged cannons sometimes fizzle the charge
+        if (random.nextDouble() < parts.misfireChance()) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            explosions.add(new Explosion(player.getBulletX(), player.getBulletY(), 0.5));
+            return;
+        }
+
+        int damage = Upgrades.lanceDamage(power, upgrades.getCaliberLevel());
+        int half = (int) Math.round(12 + 18 * power);
+        int startX = player.getBulletX();
+        int cy = player.getBulletY();
+        Rectangle beam = new Rectangle(startX, cy - half, SCREEN_WIDTH - startX, half * 2);
+
+        lanceFlash = LANCE_FLASH;
+        lanceY = cy;
+        lanceStartX = startX;
+        lanceHalf = half;
+        lancePower = power;
+
+        for (int j = enemies.size() - 1; j >= 0; j--) {
+            Enemy enemy = enemies.get(j);
+            if (beam.intersects(enemy.getBounds())) {
+                enemy.takeDamage(damage);
+                if (enemy.isDead()) {
+                    destroyEnemy(enemy, j);
+                }
+            }
+        }
+
+        for (int j = hazards.size() - 1; j >= 0; j--) {
+            Hazard hazard = hazards.get(j);
+            if (!hazard.isMeteor() && beam.intersects(hazard.getBounds())) {
+                hazard.takeDamage(damage);
+                if (hazard.isDead()) {
+                    destroyAsteroid(j, true);
+                }
+            }
+        }
+
+        for (int j = enemyBullets.size() - 1; j >= 0; j--) {
+            BossBullet shot = enemyBullets.get(j);
+            if (shot.isDestroyable() && beam.intersects(shot.getBounds())) {
+                enemyBullets.remove(j);
+                shotBurst(shot);
+                score += 5;
+                earn(5, shot.getCenterX(), shot.getCenterY());
+            }
+        }
+
+        for (int g = guardians.size() - 1; g >= 0; g--) {
+            Guardian guard = guardians.get(g);
+            if (beam.intersects(guard.getBounds())) {
+                guard.takeDamage(damage);
+                if (guard.isDead()) {
+                    guardianDestroyed(g);
+                }
+            }
+        }
+
+        if (boss != null && !boss.isInvulnerable() && beam.intersects(boss.getBounds())) {
+            boss.takeDamage(damage);
+            playBossSound(SoundManager.Sfx.BOSS_HIT);
+            bossHitSoundTimer = 5;
+        }
+
+        sound.playShot(shotFor(ShotSound.Gun.LANCE));
+        shakeTimer = Math.max(shakeTimer, (int) Math.round(4 + 8 * power));
+        wearPart(ShipParts.CANNONS, ShipParts.WEAR_PER_VOLLEY * 3);
+
+        if (rapidTimer == 0) {
+            ammo--;
+            if (ammo <= 0) {
+                startReload(reloadTicks());
+            }
+        }
+    }
+
+    /**
+     * Switches the max weapon (C in battle, or SWITCH on the Cannons card in the hangar).
+     * It only works once CANNONS is fully upgraded; the choice is saved with the ship.
+     */
+    void cycleMaxWeapon() {
+
+        boolean inHangar = (currentState == GameState.UPGRADE);
+        Upgrades ship = inHangar ? hangar : upgrades;
+
+        if (!ship.maxWeaponReady()) {
+            sound.play(SoundManager.Sfx.EMPTY);
+            if (inHangar) {
+                showUpgradeMessage("MAX OUT CANNONS TO UNLOCK THE MAX WEAPONS", false);
+            } else {
+                pickupText = "MAX OUT CANNONS TO UNLOCK THE MAX WEAPONS";
+                pickupTimer = 90;
+            }
+            return;
+        }
+
+        MaxWeapon next = ship.cycleMaxWeapon();
+        lanceCharge = 0;
+        sound.play(SoundManager.Sfx.RELOAD_DONE);
+
+        if (inHangar) {
+            bay.install(Upgrades.CANNONS, next.title.toUpperCase());     // the robot arms swap the weapon
+            showUpgradeMessage("MAX WEAPON: " + next.title.toUpperCase() + " - " + next.blurb, true);
+        } else {
+            pickupText = "MAX WEAPON: " + next.title.toUpperCase();
+            pickupTimer = 100;
+        }
+
+        saveProgress();
     }
 
     /** Homing shots turn toward the nearest alien (or the boss) each tick. */
@@ -2568,6 +3037,13 @@ public class GamePanel extends JPanel {
         for (Bullet bullet : bullets) {
 
             if (!bullet.getWeapon().homing) {
+                continue;
+            }
+
+            // A Nova star (or shard) hunts its own alien while it is alive and still ahead
+            Enemy target = bullet.getTarget();
+            if (target != null && !target.isDead() && enemies.contains(target) && target.getCenterX() > bullet.getX()) {
+                bullet.steer(target.getCenterX(), target.getCenterY());
                 continue;
             }
 
@@ -2592,6 +3068,12 @@ public class GamePanel extends JPanel {
 
             if (bestDistance != Double.MAX_VALUE) {
                 bullet.steer(tx, ty);
+            }
+
+            // A hunter whose alien is gone picks the nearest one as its new target
+            if (bullet.getWeapon() == Weapon.NOVA || bullet.getWeapon() == Weapon.NOVA_SHARD) {
+                List<Enemy> nearest = nearestAliens(bullet.getX(), bullet.getY(), 1, null);
+                bullet.setTarget(nearest.isEmpty() ? null : nearest.get(0));
             }
         }
     }
@@ -2691,10 +3173,13 @@ public class GamePanel extends JPanel {
         int damage = fromCannon ? CANNON_BEAM_DAMAGE : LASER_DAMAGE;
         int bossDamage = fromCannon ? CANNON_BEAM_BOSS_DAMAGE : LASER_BOSS_DAMAGE;
 
-        // The cannon's beam is quiet (its shots already make noise); the orb's beam is loud
+        // The orb's beam zaps loudly; the built-in cannon's beam zaps higher and lighter (its guns are firing too)
         if (!fromCannon && laserSoundTimer == 0) {
             sound.playShot(shotFor(ShotSound.Gun.BEAM));
             laserSoundTimer = 14;
+        } else if (fromCannon && cannonBeamSoundTimer == 0) {
+            sound.playShot(shotFor(ShotSound.Gun.CANNON_BEAM));
+            cannonBeamSoundTimer = 14;
         }
 
         // Several beams fire side by side, one more for every few upgrades bought
@@ -2932,7 +3417,7 @@ public class GamePanel extends JPanel {
 
                 // Dashers and gunners alternate, so the wave has both kinds of danger
                 Enemy.Type type = (ambushSpawnsLeft % 2 == 0) ? Enemy.Type.DASHER : Enemy.Type.GUNNER;
-                enemies.add(new Enemy(type, enemySpeedFactor()));
+                enemies.add(makeAlien(type));
 
                 ambushSpawnsLeft--;
                 ambushSpawnCooldown = AMBUSH_SPACING;
@@ -2996,13 +3481,137 @@ public class GamePanel extends JPanel {
     }
 
     /**
-     * Frames until the next regular alien. It follows the mission's pace, is slower
-     * while a boss is on screen, and is set by the spawn quantity on the Settings screen.
+     * Frames until the next regular alien. It follows the mission's pace, comes faster as
+     * the mission nears its end and the longer it runs (see rushFactor), keeps coming
+     * while a boss is here (faster against a stronger ship), and is set by the spawn
+     * quantity on the Settings screen.
      */
     int spawnInterval() {
 
-        int pace = (boss != null) ? currentEnemySpawnInterval * 2 : currentEnemySpawnInterval;
+        double pace = currentEnemySpawnInterval * rushFactor();
+
+        if (boss != null) {
+            pace *= 1.3 - 0.4 * bossPower;
+        }
+
         return Math.max(MIN_SPAWN_INTERVAL, (int) Math.round(pace / spawnAmount()));
+    }
+
+    /**
+     * Aliens come faster as a mission nears its end (up to a third faster) and the longer it
+     * runs (10% faster each minute, up to a quarter). 1.0 at the start. Hardcore speeds up on its own clock.
+     */
+    double rushFactor() {
+
+        if (selectedMode == GameMode.HARDCORE) {
+            return 1.0;
+        }
+
+        double minutes = missionTicks / (double) (60 * TICKS_PER_SECOND);
+        return Math.max(0.5, (1.0 - 0.35 * progress()) * Math.max(0.75, 1.0 - 0.1 * minutes));
+    }
+
+    /** The chance that a spawn brings a second alien (and a smaller chance of a third): it grows with time. */
+    double groupChance() {
+
+        int ticks = (selectedMode == GameMode.HARDCORE) ? hardcoreTicks : missionTicks;
+        double minutes = ticks / (double) (60 * TICKS_PER_SECOND);
+        double fierce = (mission != null && selectedMode != GameMode.HARDCORE) ? 0.25 * (mission.aggression - 1.0) : 0.0;
+        return Math.max(0.0, Math.min(0.65, 0.45 * progress() + 0.08 * minutes + fierce));
+    }
+
+    // ---------- How fast, aggressive and tough the aliens are ----------
+
+    static final double ALIEN_SPEED_BOOST = 1.15;    // aliens move 15% faster than the asteroids' pace
+
+    /** A new alien of this type, as fast, aggressive and tough as the mission is by now. */
+    Enemy makeAlien(Enemy.Type type) {
+
+        Enemy enemy = new Enemy(type, alienSpeedFactor());
+        strengthen(enemy);
+        return enemy;
+    }
+
+    /** Gives an alien the mission's aggression and toughness (also used for a boss's allies). */
+    void strengthen(Enemy enemy) {
+
+        enemy.setAggression(enemyAggression());
+        enemy.setToughness(enemyToughness());
+    }
+
+    /** How fast aliens move: the mission's speed, 15% more, and a little more as they get angrier. */
+    double alienSpeedFactor() {
+        return enemySpeedFactor() * ALIEN_SPEED_BOOST * (1.0 + 0.1 * (enemyAggression() - 1.0));
+    }
+
+    /**
+     * How aggressively aliens shoot (1.0 = normal): it rises as a mission goes on and the
+     * longer it runs, starts higher in Missions 3 and 4 (see Mission.fierce), and is higher
+     * at the top player level. In Hardcore it rises over time and after every boss.
+     */
+    double enemyAggression() {
+
+        double aggression;
+
+        if (selectedMode == GameMode.HARDCORE) {
+            aggression = 1.0 + Math.min(0.9, hardcoreTicks / 18000.0 + 0.1 * hardcoreBossesDefeated);
+        } else {
+            double base = (mission != null) ? mission.aggression : 1.0;
+            double minutes = missionTicks / (double) (60 * TICKS_PER_SECOND);
+            aggression = base + 0.3 * progress() + Math.min(0.3, 0.1 * minutes);
+        }
+
+        return maxLevelRun ? aggression * 1.15 : aggression;
+    }
+
+    /** How much health aliens have (1.0 = normal): more in Missions 3 and 4, and after each Hardcore boss. */
+    double enemyToughness() {
+
+        if (selectedMode == GameMode.HARDCORE) {
+            return 1.0 + Math.min(1.0, 0.15 * hardcoreBossesDefeated);
+        }
+
+        return (mission != null) ? mission.toughness : 1.0;
+    }
+
+    // ---------- The final wave ----------
+
+    static final double FINAL_WAVE_AT = 0.85;       // how far through a mission the final wave comes
+    static final int FINAL_WAVE_SIZE = 6;           // aliens in it (changed by the spawn amount)
+
+    /** Near the end of every mission (not Hardcore) the aliens make a last push: a wave of tougher aliens. */
+    void updateFinalWave() {
+
+        if (selectedMode == GameMode.HARDCORE || mission == null) {
+            return;
+        }
+
+        boolean bossQuiet = (boss == null && bossDeathTimer == 0);
+
+        if (!finalWaveSprung && progress() >= FINAL_WAVE_AT && bossQuiet) {
+
+            finalWaveSprung = true;
+            finalWaveLeft = scaledAmount(FINAL_WAVE_SIZE + (int) Math.round(4 * (mission.aggression - 1.0)));
+            finalWaveCooldown = 30;
+
+            shakeTimer = 18;
+            bannerTitle = "FINAL WAVE";
+            bannerSubtitle = "THEY'RE THROWING EVERYTHING AT YOU";
+            bannerTimer = BANNER_TIME;
+            sound.play(SoundManager.Sfx.WARNING);
+        }
+
+        if (finalWaveLeft > 0 && bossQuiet) {
+
+            finalWaveCooldown--;
+
+            if (finalWaveCooldown <= 0) {
+                Enemy.Type[] kinds = {Enemy.Type.GUNNER, Enemy.Type.DIVER, Enemy.Type.LOOPER, Enemy.Type.ZIGZAG};
+                enemies.add(makeAlien(kinds[finalWaveLeft % kinds.length]));
+                finalWaveLeft--;
+                finalWaveCooldown = 18;
+            }
+        }
     }
 
     Enemy createEnemy() {
@@ -3027,7 +3636,7 @@ public class GamePanel extends JPanel {
             type = Enemy.Type.ZIGZAG;
         }
 
-        Enemy enemy = new Enemy(type, enemySpeedFactor());
+        Enemy enemy = makeAlien(type);
 
         // HARDCORE: after every boss, more aliens learn to predict your shots and dodge
         if (selectedMode == GameMode.HARDCORE && hardcoreBossesDefeated > 0
@@ -3049,6 +3658,8 @@ public class GamePanel extends JPanel {
         enemiesDefeated++;
         aliensDestroyed++;
         gainXp(enemy.getRank() * 5);
+        questEvent(Quest.Goal.ALIENS, 1);
+        questEvent(Quest.Goal.STREAK, 1);
         sound.play(SoundManager.Sfx.EXPLODE);
 
         unlock(Achievement.FIRST_BLOOD);
@@ -3428,8 +4039,11 @@ public class GamePanel extends JPanel {
                         destroyAsteroid(j, true);
                     }
 
-                    // The splash of a fireball may remove other rocks, so it comes last
+                    // The splash of a fireball (or an Omega orb's burst) may remove other rocks, so it comes last
                     impact(bullet);
+                    if (bullet.getWeapon() == Weapon.OMEGA) {
+                        omegaBurst(bullet);
+                    }
                     break;
                 }
             }
@@ -3465,6 +4079,7 @@ public class GamePanel extends JPanel {
         if (rewarded) {
             score += hazard.getCredits();
             earn(hazard.getCredits(), hazard.getCenterX(), hazard.getCenterY());
+            questEvent(Quest.Goal.ASTEROIDS, 1);
         }
     }
 
@@ -3487,6 +4102,8 @@ public class GamePanel extends JPanel {
     }
 
     void collectPowerUp(PowerUp powerUp) {
+
+        questEvent(Quest.Goal.POWER_UPS, 1);
 
         switch (powerUp.getType()) {
 
@@ -3541,6 +4158,7 @@ public class GamePanel extends JPanel {
 
         lives--;
         lifeLostThisMission = true;
+        hangar.breakStreak();
         damageCooldown = 75;
         shakeTimer = 14;
         hurtFlash = 22;
@@ -3647,7 +4265,21 @@ public class GamePanel extends JPanel {
             }
         }
 
-        enemies.addAll(boss.takeSpawns());
+        for (Enemy ally : boss.takeSpawns()) {
+            strengthen(ally);
+            enemies.add(ally);
+        }
+
+        if (boss.consumeRisen()) {
+            moveWarning = "THE EXECUTIONER RISES AGAIN!";
+            moveWarningTimer = 110;
+            shakeTimer = 18;
+        }
+
+        if (boss.consumeAlliesCalled() && moveWarningTimer <= 0) {
+            moveWarning = "ALLIES INCOMING!";
+            moveWarningTimer = 80;
+        }
 
         if (boss.isEntering()) {
             return;
@@ -3670,6 +4302,9 @@ public class GamePanel extends JPanel {
 
             if (hitGuardian(bullet)) {
                 bullets.remove(i);
+                if (bullet.getWeapon() == Weapon.OMEGA) {
+                    omegaBurst(bullet);
+                }
                 continue;
             }
 
@@ -3684,6 +4319,9 @@ public class GamePanel extends JPanel {
                 }
 
                 impact(bullet);
+                if (bullet.getWeapon() == Weapon.OMEGA) {
+                    omegaBurst(bullet);
+                }
             }
         }
 
@@ -3832,13 +4470,25 @@ public class GamePanel extends JPanel {
 
     void spawnBoss(Mission.BossSpec spec) {
 
-        int tier = (selectedMode == GameMode.HARDCORE) ? hardcoreBossesDefeated : nextBossIndex;
+        // How far into the game this boss is: Hardcore counts every boss so far, a LEVEL counts
+        // its bosses, and in the Adventure every boss is met for the first time
+        int tier;
+        if (selectedMode == GameMode.HARDCORE) {
+            tier = hardcoreBossesDefeated;
+        } else if (selectedMode == GameMode.LEVEL) {
+            tier = nextBossIndex;
+        } else {
+            tier = 0;
+        }
 
         // The boss's version (its look) decides how it fights, and its name says which it is
         int version = Boss.defaultVersion(spec.design, tier);
-        int health = (int) Math.round(spec.health * (maxLevelRun ? MAX_LEVEL_BOSS_HEALTH : 1.0));
+        // The boss is scaled to your ship: more health and more abilities the stronger it is
+        bossPower = shipPower();
+        int health = (int) Math.round(spec.health * bossHealthScale(bossPower) * (maxLevelRun ? MAX_LEVEL_BOSS_HEALTH : 1.0));
         String name = Boss.hasVersions(spec.design) ? spec.name + " - " + Boss.versionName(version) : spec.name;
         boss = new Boss(spec.design, health, name, tier, version);
+        boss.scaleToShip(bossPower);
         bossReward = spec.reward();
 
         bossSupplyTimer = 7 * TICKS_PER_SECOND;
@@ -3860,9 +4510,42 @@ public class GamePanel extends JPanel {
         }
         enemies.clear();
 
+        // ...and it brings its own allies: more of them, and tougher ones, against a stronger ship
+        int escorts = bossEscorts(bossPower);
+        Enemy.Type[] kinds = {Enemy.Type.GUNNER, Enemy.Type.LOOPER, Enemy.Type.DIVER, Enemy.Type.ZIGZAG, Enemy.Type.DASHER};
+        for (int i = 0; i < escorts; i++) {
+            enemies.add(makeAlien(kinds[i % kinds.length]));
+        }
+
         if (spec.radio != null) {
             showRadio(spec.radio.speaker, spec.radio.text);
         }
+    }
+
+    // ---------- Bosses scale with your ship ----------
+
+    /**
+     * How strong your ship is right now: 0.0 (brand new and battered) to 1.0 (fully
+     * upgraded, top level, every life and part intact). Mostly its upgrades, then its
+     * player level, then how healthy it is. Bosses are scaled to this when they arrive.
+     */
+    double shipPower() {
+
+        double built = upgrades.purchases() / (double) Upgrades.totalSteps();
+        double level = (hangar.playerLevel() - 1) / (double) (Upgrades.MAX_PLAYER_LEVEL - 1);
+        double partsHealth = (parts.get(ShipParts.CANNONS) + parts.get(ShipParts.FEED) + parts.get(ShipParts.ENGINES)) / 300.0;
+        double health = 0.5 * Math.min(1.0, lives / (double) MAX_LIVES) + 0.5 * partsHealth;
+        return Math.max(0.0, Math.min(1.0, 0.6 * built + 0.2 * level + 0.2 * health));
+    }
+
+    /** A boss's health for a ship this strong: 80% for the weakest ship, up to 160% for the strongest. */
+    static double bossHealthScale(double power) {
+        return 0.8 + 0.8 * power;
+    }
+
+    /** How many allies arrive with a boss: 2 for the weakest ship, up to 5 for the strongest. */
+    static int bossEscorts(double power) {
+        return 2 + (int) Math.round(3 * power);
     }
 
     void startBossDeath() {
@@ -3920,6 +4603,7 @@ public class GamePanel extends JPanel {
         boss = null;
         unlock(Achievement.BOSS_BREAKER);
         gainXp(150);
+        questEvent(Quest.Goal.BOSSES, 1);
 
         if (selectedMode == GameMode.HARDCORE) {
 

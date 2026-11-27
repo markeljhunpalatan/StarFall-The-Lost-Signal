@@ -16,7 +16,7 @@ import java.util.Random;
 
 /**
  * Draws everything BEHIND the action: the scrolling stars plus the scenery
- * that changes with the story (Earth, deep space, the mothership's shadow
+ * that changes with the story (Earth, deep space, the mothership itself
  * and the wormhole), and the black hole behind the Hard LEVEL.
  */
 public class SpaceBackground {
@@ -102,7 +102,7 @@ public class SpaceBackground {
                 break;
 
             case MOTHERSHIP:
-                drawHull(g);
+                MothershipArt.draw(g, tick);
                 break;
 
             case WORMHOLE:
@@ -130,8 +130,8 @@ public class SpaceBackground {
 
         switch (scene) {
             case MOTHERSHIP:
-                top = new Color(18, 5, 16);
-                bottom = new Color(34, 6, 12);
+                top = new Color(12, 4, 26);
+                bottom = new Color(30, 6, 32);
                 break;
             case WORMHOLE:
                 top = new Color(8, 5, 30);
@@ -197,8 +197,8 @@ public class SpaceBackground {
                 b = new Color(30, 90, 170, 60);
                 break;
             case MOTHERSHIP:
-                a = new Color(160, 30, 40, 70);
-                b = new Color(110, 40, 20, 60);
+                a = new Color(170, 40, 140, 60);
+                b = new Color(80, 30, 160, 55);
                 break;
             case WORMHOLE:
                 a = new Color(90, 60, 220, 70);
@@ -319,32 +319,6 @@ public class SpaceBackground {
         pair = new BufferedImage[]{glowImage, PlanetArt.disc(r)};
         earthCache.put(r, pair);
         return pair;
-    }
-
-    /** The mothership's huge shadow on the right edge of the screen. */
-    private void drawHull(Graphics2D g) {
-
-        int cx = width + 90;
-        int cy = height / 2;
-        int r = 330;
-
-        g.setPaint(new RadialGradientPaint(
-            new Point2D.Float(cx - r * 0.3f, cy), r,
-            new float[]{0f, 1f},
-            new Color[]{new Color(60, 24, 70), new Color(14, 4, 20)}
-        ));
-        g.fill(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
-
-        // Ring of blinking lights
-        for (int i = 0; i < 28; i++) {
-            double angle = Math.PI + (i - 14) * 0.1;
-            int lx = (int) (cx + Math.cos(angle) * (r - 18));
-            int ly = (int) (cy + Math.sin(angle) * (r - 18));
-            int on = ((tick / 18) + i) % 4;
-
-            g.setColor(on == 0 ? new Color(255, 60, 60, 230) : new Color(120, 20, 30, 150));
-            g.fillOval(lx - 3, ly - 3, 6, 6);
-        }
     }
 
     /** The wormhole. Also used by the story screens. */

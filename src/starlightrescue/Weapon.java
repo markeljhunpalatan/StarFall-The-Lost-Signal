@@ -13,7 +13,8 @@ import java.awt.image.BufferedImage;
  *   level 4  COMET      three comets that steer toward the nearest alien
  *
  * Rapid fire does not change the gun: it fires the same gun faster. ALLY rounds
- * are what your wingman fires.
+ * are what your wingman fires. OMEGA, NOVA and NOVA_SHARD are the shots of the max
+ * weapons, once CANNONS is fully upgraded (see MaxWeapon).
  *
  * Want to rebalance a weapon? Change the numbers in its line below.
  */
@@ -24,7 +25,12 @@ public enum Weapon {
     ARC      ("Arc cannon",          "shots/shot3_", 1, 3,   "shots/shot3_exp", 1, 4,   new Color(255, 110, 90),   10,  7, 2, true,  false, 0, 2.5),
     FIREBALL ("Fireball launcher",   "shots/shot4_", 1, 5,   "shots/shot4_exp", 1, 8,   new Color(255, 160, 40),    7, 14, 1, false, false, 42, 2.4),
     COMET    ("Homing comets",       "shots/shot5_", 1, 5,   "shots/shot5_exp", 1, 8,   new Color(255, 230, 80),    9,  7, 3, false, true,  0, 3.0),
-    ALLY     ("Wingman rounds",      "shots/shot2_", 1, 6,   "shots/shot2_exp", 1, 5,   new Color(90, 230, 255),   11,  8, 1, false, false, 0, 2.5);
+    ALLY     ("Wingman rounds",      "shots/shot2_", 1, 6,   "shots/shot2_exp", 1, 5,   new Color(90, 230, 255),   11,  8, 1, false, false, 0, 2.5),
+
+    // The max weapons (see MaxWeapon). Their shots are drawn in code (see Bullet), so the pictures are only a fallback.
+    OMEGA    ("Omega orb",           "shots/shot4_", 1, 5,   "shots/shot4_exp", 1, 8,   new Color(255, 205, 70),   12, 50, 1, false, false, 0, 1.0),
+    NOVA     ("Nova star",           "shots/shot5_", 1, 5,   "shots/shot5_exp", 1, 8,   new Color(255, 215, 90),    8,  5, 5, false, true,  0, 1.0),
+    NOVA_SHARD ("Nova shard",        "shots/shot5_", 1, 5,   "shots/shot5_exp", 1, 8,   new Color(255, 235, 150),   8,  5, 2, false, true,  0, 0.8);
 
     public final String title;
     final String flightPrefix;
