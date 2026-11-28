@@ -65,6 +65,7 @@ final class Screens {
             case VICTORY:           drawVictory(g); break;
             case WARP:              WormholeWarp.draw(g, game.warpTick, game.previewPlayer, game.background); break;
             case ACHIEVEMENTS:      drawAchievements(g); break;
+            case PROGRESS:          drawProgress(g); break;
             default:                break;
         }
 
@@ -331,6 +332,7 @@ final class Screens {
         // Buttons
         menuButton(g, GamePanel.PLAY_BUTTON, UI.Icon.PLAY, "PLAY", null, UI.CYAN);
         menuButton(g, GamePanel.HANGAR_BUTTON, UI.Icon.WRENCH, "HANGAR", fmt(game.hangar.getCredits()), UI.GOLD);
+        menuButton(g, GamePanel.QUESTS_BUTTON, UI.Icon.TARGET, "QUESTS", "LV " + game.hangar.playerLevel(), UI.GREEN);
         menuButton(g, GamePanel.ACHIEVEMENTS_BUTTON, UI.Icon.STAR, "ACHIEVEMENTS", null, UI.GOLD);
         menuButton(g, GamePanel.SETTINGS_BUTTON, UI.Icon.GEAR, "SETTINGS", null, UI.VIOLET);
         menuButton(g, GamePanel.HOWTO_BUTTON, UI.Icon.HELP, "HOW TO PLAY", null, UI.VIOLET);
@@ -352,7 +354,7 @@ final class Screens {
 
         g.setFont(UI.plain(12f));
         g.setColor(UI.alpha(UI.TEXT, 150 + (int) (Math.sin(t * 0.08) * 60)));
-        UI.center(g, "Press Enter to play", W / 2, 520);
+        UI.center(g, "Press Enter to play", W / 2, 540);
     }
 
     // ===============================================================
@@ -416,6 +418,240 @@ final class Screens {
 
     private static String modeName(GamePanel.GameMode mode) {
         return capitalize(mode.name());
+    }
+
+    // ===============================================================
+    // PILOT LEVEL: the level bar and every quest
+    // ===============================================================
+
+    /**
+     * Your pilot level: a bar across all ten levels, how much XP is left, and the list of
+     * quests (one per level) with what is done, what is next, and what each level opens up.
+     * Every ship levels up on its own, so the tabs switch between them. From the pause
+     * screen the battle stays behind it, frozen.
+     */
+    private void drawProgress(Graphics2D g) {
+
+        boolean fromPause = game.progressReturn == GamePanel.GameState.PAUSED;
+
+        if (fromPause) {
+            drawGameplay(g);
+            g.setColor(new Color(5, 7, 18, 242));
+            g.fillRect(0, 0, W, H);
+        }
+
+        Upgrades ship = game.progressProfile();
+        int level = ship.playerLevel();
+
+        g.setFont(UI.bold(26f));
+        UI.title(g, "Pilot level", W / 2, 44, 1.5f, Color.WHITE, new Color(200, 220, 255), 0);
+
+        for (int i = 0; i < GamePanel.PROGRESS_SHIP_TABS.length; i++) {
+            pillTab(g, GamePanel.PROGRESS_SHIP_TABS[i], GamePanel.progressShipName(i), UI.GOLD, game.progressShip == i, 11.5f);
+        }
+
+        drawLevelTrack(g, ship, level);
+        drawQuestList(g, ship, level);
+
+        UI.button(g, GamePanel.HELP_BACK_BUTTON, fromPause ? "BACK TO GAME" : "BACK", UI.VIOLET,
+                  hover(GamePanel.HELP_BACK_BUTTON), true, game.frame);
+    }
+
+    /** The level bar across all ten levels: reached ones gold, the current one glowing, partly filled by XP. */
+    private void drawLevelTrack(Graphics2D g, Upgrades ship, int level) {
+
+        UI.glass(g, 40, 98, 720, 118, 18, UI.GOLD);
+
+        g.setFont(UI.bold(20f));
+        g.setColor(Color.WHITE);
+        String head = "Level " + level;
+        g.drawString(head, 60, 130);
+        int headWidth = UI.width(g, head);
+        g.setFont(UI.plain(12f));
+        g.setColor(UI.MUTED);
+        g.drawString("of " + Upgrades.MAX_PLAYER_LEVEL + "  ·  " + capitalize(ship.getShipClass()) + " class", 60 + headWidth + 10, 130);
+
+        g.setFont(UI.bold(13f));
+        g.setColor(UI.GOLD);
+        String xp = ship.isTopLevel() ? ship.getXp() + " XP" : ship.getXp() + " / " + Upgrades.LEVEL_XP[level] + " XP";
+        UI.right(g, xp, 740, 130);
+
+        // The track: one node per level, joined by bars that fill as you go
+        int n = Upgrades.MAX_PLAYER_LEVEL;
+        int x0 = 76;
+        int gap = (724 - x0) / (n - 1);
+        int cy = 164;
+
+        for (int lv = 1; lv < n; lv++) {
+            int ax = x0 + (lv - 1) * gap;
+            double fill = (level > lv) ? 1.0 : (level == lv ? ship.levelProgress() : 0.0);
+            g.setColor(new Color(255, 255, 255, 28));
+            g.fillRoundRect(ax, cy - 3, gap, 6, 6, 6);
+            if (fill > 0) {
+                boolean waiting = (level == lv && ship.xpFull() && !ship.questDone());
+                g.setColor(waiting ? UI.ORANGE : UI.GOLD);
+                g.fillRoundRect(ax, cy - 3, (int) Math.round(gap * fill), 6, 6, 6);
+            }
+        }
+
+        for (int lv = 1; lv <= n; lv++) {
+
+            int nx = x0 + (lv - 1) * gap;
+            boolean reached = level >= lv;
+            boolean current = level == lv;
+
+            if (current) {
+                int pulse = (int) (60 + 50 * Math.sin(game.frame * 0.1));
+                g.setColor(UI.alpha(UI.GOLD, pulse));
+                g.fillOval(nx - 19, cy - 19, 38, 38);
+            }
+
+            g.setColor(reached ? UI.GOLD : new Color(40, 46, 72));
+            g.fillOval(nx - 13, cy - 13, 26, 26);
+            g.setStroke(new BasicStroke(1.5f));
+            g.setColor(reached ? UI.mix(UI.GOLD, Color.WHITE, 0.4) : new Color(255, 255, 255, 50));
+            g.drawOval(nx - 13, cy - 13, 26, 26);
+            g.setStroke(new BasicStroke(1f));
+
+            g.setFont(UI.bold(12f));
+            g.setColor(reached ? UI.DARK : UI.MUTED);
+            UI.center(g, String.valueOf(lv), nx, cy + 4);
+        }
+
+        // What it takes to reach the next level
+        String status;
+        Color colour;
+        if (ship.isTopLevel()) {
+            status = "Top level reached: every upgrade is open";
+            colour = UI.GOLD;
+        } else if (ship.xpFull() && ship.questDone()) {
+            status = "Level " + (level + 1) + " is ready!";
+            colour = UI.GREEN;
+        } else if (ship.xpFull()) {
+            status = "XP full: finish the quest to reach level " + (level + 1);
+            colour = UI.ORANGE;
+        } else if (ship.questDone()) {
+            status = "Quest done: earn " + ship.xpToNextLevel() + " more XP to reach level " + (level + 1);
+            colour = UI.GREEN;
+        } else {
+            status = "Earn " + ship.xpToNextLevel() + " more XP and finish the quest to reach level " + (level + 1);
+            colour = UI.TEXT;
+        }
+        g.setFont(UI.plain(12f));
+        g.setColor(colour);
+        UI.center(g, status, W / 2, 202);
+    }
+
+    /** Every quest, one per level: done ones ticked, the current one with its progress, later ones locked. */
+    private void drawQuestList(Graphics2D g, Upgrades ship, int level) {
+
+        UI.glass(g, 40, 226, 720, 306, 18, UI.CYAN);
+
+        g.setFont(UI.bold(11f));
+        g.setColor(UI.CYAN);
+        UI.trackedLeft(g, "QUESTS", 60, 248, 2f);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        UI.right(g, "One per level: earn the XP, then finish the quest to level up", 740, 248);
+
+        for (int i = 0; i < Quest.count(); i++) {
+
+            int from = i + 1;                       // the quest at this level ...
+            int to = i + 2;                         // ... leads to this one
+            Quest quest = Quest.forLevel(from);
+            int y = 258 + i * 30;
+            boolean done = level > from;
+            boolean current = level == from;
+
+            if (current) {
+                g.setColor(UI.alpha(UI.GOLD, 26));
+                g.fillRoundRect(52, y, 696, 28, 12, 12);
+                g.setColor(UI.alpha(UI.GOLD, 90));
+                g.drawRoundRect(52, y, 696, 28, 12, 12);
+            }
+
+            // The status mark: a tick, a glowing ring, or a lock
+            int cx = 70;
+            int cy = y + 14;
+            if (done) {
+                g.setColor(UI.GREEN);
+                g.fillOval(cx - 9, cy - 9, 18, 18);
+                g.setColor(UI.DARK);
+                g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.drawPolyline(new int[]{cx - 4, cx - 1, cx + 5}, new int[]{cy, cy + 4, cy - 4}, 3);
+            } else if (current) {
+                g.setColor(UI.GOLD);
+                g.setStroke(new BasicStroke(2f));
+                g.drawOval(cx - 8, cy - 8, 16, 16);
+                int dot = 4 + (int) Math.round(2 * (0.5 + 0.5 * Math.sin(game.frame * 0.15)));
+                g.fillOval(cx - dot / 2, cy - dot / 2, dot, dot);
+            } else {
+                g.setColor(new Color(40, 46, 72));
+                g.fillOval(cx - 9, cy - 9, 18, 18);
+                g.setColor(UI.MUTED);
+                g.setStroke(new BasicStroke(1.4f));
+                g.drawArc(cx - 3, cy - 6, 6, 7, 0, 180);
+                g.fillRoundRect(cx - 4, cy - 2, 8, 6, 2, 2);
+            }
+            g.setStroke(new BasicStroke(1f));
+
+            g.setFont(UI.bold(12f));
+            g.setColor(done ? UI.GREEN : (current ? UI.GOLD : UI.MUTED));
+            g.drawString("Level " + to, 88, y + 18);
+
+            g.setFont(UI.plain(12.5f));
+            g.setColor(done ? UI.TEXT : (current ? Color.WHITE : UI.MUTED));
+            g.drawString(quest.text, 152, y + 13);
+
+            g.setFont(UI.plain(10f));
+            g.setColor(UI.MUTED);
+            List<String> opens = ship.unlocksAt(to);
+            String note = Upgrades.LEVEL_XP[to - 1] + " XP";
+            if (!opens.isEmpty()) {
+                note = "Opens " + upgradeNames(opens) + "  ·  " + note;
+            }
+            g.drawString(note, 152, y + 25);
+
+            // On the right: done, the progress so far, or locked
+            if (done) {
+                g.setFont(UI.bold(11f));
+                g.setColor(UI.GREEN);
+                UI.right(g, "DONE", 736, y + 18);
+            } else if (current) {
+                double fraction = ship.getQuestProgress() / (double) quest.target;
+                Color bar = ship.questDone() ? UI.GREEN : UI.GOLD;
+                g.setColor(new Color(0, 0, 0, 110));
+                g.fillRoundRect(566, y + 10, 120, 8, 8, 8);
+                g.setColor(bar);
+                g.fillRoundRect(566, y + 10, (int) Math.round(120 * Math.min(1.0, fraction)), 8, 8, 8);
+                g.setFont(UI.bold(11f));
+                g.setColor(bar);
+                UI.right(g, ship.questDone() ? "DONE" : ship.getQuestProgress() + "/" + quest.target, 736, y + 18);
+            } else {
+                g.setFont(UI.plain(11f));
+                g.setColor(UI.MUTED);
+                UI.right(g, "Locked", 736, y + 18);
+            }
+        }
+    }
+
+    /** Upgrade names for a short line: "Cannons, Ammo core and Hull MK II". */
+    private static String upgradeNames(List<String> names) {
+
+        StringBuilder out = new StringBuilder();
+
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            boolean mk2 = name.endsWith(" MK II");
+            String base = mk2 ? name.substring(0, name.length() - 6) : name;
+            base = base.charAt(0) + base.substring(1).toLowerCase();
+            if (i > 0) {
+                out.append(i == names.size() - 1 ? " and " : ", ");
+            }
+            out.append(base).append(mk2 ? " MK II" : "");
+        }
+
+        return out.toString();
     }
 
     // ===============================================================
@@ -3200,9 +3436,18 @@ final class Screens {
         statLine(g, "Lives", String.valueOf(game.lives), UI.RED, 320);
         statLine(g, "Time", time(runTicks()), Color.WHITE, 356);
 
-        g.setFont(UI.plain(12f));
+        // Your level and quests, without leaving the battle
+        Rectangle q = GamePanel.PAUSE_QUESTS_BUTTON;
+        UI.button(g, q, "", UI.GREEN, hover(q), true, game.frame);
+        UI.icon(g, UI.Icon.TARGET, q.x + 22, q.y + q.height / 2, 12, hover(q) ? Color.WHITE : UI.GREEN);
+        g.setFont(UI.bold(12f));
+        g.setColor(hover(q) ? Color.WHITE : UI.TEXT);
+        g.drawString("LEVEL & QUESTS", q.x + 40, q.y + 21);
+        UI.keycap(g, "Q", q.x + q.width - 30, q.y + 5);
+
+        g.setFont(UI.plain(11f));
         g.setColor(UI.MUTED);
-        UI.center(g, "Press P to resume. Your credits are already saved.", W / 2, 400);
+        UI.center(g, "Press P to resume. Your credits are already saved.", W / 2, 422);
 
         modalButtons(g, "RESUME", UI.CYAN, "MAIN MENU");
     }

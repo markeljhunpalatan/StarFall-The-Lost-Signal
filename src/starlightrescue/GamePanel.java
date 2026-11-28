@@ -125,6 +125,7 @@ public class GamePanel extends JPanel {
         SETTINGS,
         INSTRUCTIONS,
         ACHIEVEMENTS,
+        PROGRESS,       // the pilot level screen: the level bar and every quest (see Screens.drawProgress)
         STORY,
         UPGRADE,        // the hangar (from the menu) and the upgrade station (between fights)
         PLAYING,
@@ -180,11 +181,19 @@ public class GamePanel extends JPanel {
     // ---------- Buttons (all screen positions in one place) ----------
 
     // Main menu
-    static final Rectangle PLAY_BUTTON = new Rectangle(300, 246, 200, 46);
-    static final Rectangle HANGAR_BUTTON = new Rectangle(300, 296, 200, 46);
-    static final Rectangle ACHIEVEMENTS_BUTTON = new Rectangle(300, 346, 200, 46);
-    static final Rectangle SETTINGS_BUTTON = new Rectangle(300, 396, 200, 46);
-    static final Rectangle HOWTO_BUTTON = new Rectangle(300, 446, 200, 46);
+    static final Rectangle PLAY_BUTTON = new Rectangle(300, 232, 200, 44);
+    static final Rectangle HANGAR_BUTTON = new Rectangle(300, 280, 200, 44);
+    static final Rectangle QUESTS_BUTTON = new Rectangle(300, 328, 200, 44);
+    static final Rectangle ACHIEVEMENTS_BUTTON = new Rectangle(300, 376, 200, 44);
+    static final Rectangle SETTINGS_BUTTON = new Rectangle(300, 424, 200, 44);
+    static final Rectangle HOWTO_BUTTON = new Rectangle(300, 472, 200, 44);
+
+    // The pilot level screen: one tab per ship (each levels up on its own), and the button on the pause screen
+    static final Rectangle[] PROGRESS_SHIP_TABS = {
+        new Rectangle(64, 62, 128, 26), new Rectangle(200, 62, 128, 26), new Rectangle(336, 62, 128, 26),
+        new Rectangle(472, 62, 128, 26), new Rectangle(608, 62, 128, 26)
+    };
+    static final Rectangle PAUSE_QUESTS_BUTTON = new Rectangle(300, 372, 200, 32);
 
     // Mode and difficulty cards
     static final Rectangle HARDCORE_BUTTON = new Rectangle(40, 160, 230, 318);
@@ -385,6 +394,11 @@ public class GamePanel extends JPanel {
     int bossHitSoundTimer = 0;
     int bossReward = 0;                 // credits for the boss on screen
     int nextBossIndex = 0;              // which boss of the mission (or of this Level round) comes next
+
+    // The pilot level screen: which ship it shows (0 Adventure, 1 Hardcore, 2 - 4 the Easy, Moderate
+    // and Hard Level ships), and the screen BACK returns to (the main menu, or the pause screen)
+    int progressShip = 0;
+    GameState progressReturn = GameState.MENU;
 
     // LEVEL mode runs until the ship is destroyed, in rounds: a round is the level's aliens and
     // bosses, and each one after is faster and tougher (see completeLevelRound)
@@ -670,6 +684,10 @@ public class GamePanel extends JPanel {
                 track = battleTrack();
                 break;
 
+            case PROGRESS:
+                track = (progressReturn == GameState.PAUSED) ? battleTrack() : SoundManager.Track.MENU;
+                break;
+
             case MISSION_COMPLETE:
             case GAME_OVER:
                 track = SoundManager.Track.NONE;
@@ -865,6 +883,38 @@ public class GamePanel extends JPanel {
 
     private static String capitalizeName(String name) {
         return name.charAt(0) + name.substring(1).toLowerCase();
+    }
+
+    // ---------- The pilot level screen ----------
+
+    /** Opens the level bar and quest list, on the ship in use. BACK returns to returnTo. */
+    void openProgress(GameState returnTo) {
+
+        progressReturn = returnTo;
+        progressShip = (hangarMode == GameMode.LEVEL) ? 2 + hangarDifficulty.ordinal()
+                     : (hangarMode == GameMode.HARDCORE ? 1 : 0);
+        shooting = false;
+        currentState = GameState.PROGRESS;
+    }
+
+    void closeProgress() {
+        currentState = progressReturn;
+    }
+
+    /** Shows another ship's level (just to look: the ship in use does not change). */
+    void showProgressShip(int index) {
+        progressShip = Math.floorMod(index, PROGRESS_SHIP_TABS.length);
+    }
+
+    /** The ship the pilot level screen shows. */
+    Upgrades progressProfile() {
+        return (progressShip < 2) ? profiles.get(SHIP_MODES[progressShip])
+                                  : levelProfiles.get(Difficulty.values()[progressShip - 2]);
+    }
+
+    static String progressShipName(int index) {
+        String[] names = {"Adventure", "Hardcore", "Easy level", "Moderate level", "Hard level"};
+        return names[index];
     }
 
     /** True during a LEVEL run, which goes on in rounds until the ship is destroyed. */
@@ -1859,6 +1909,8 @@ public class GamePanel extends JPanel {
                     player.setMovingLeft(true);
                 } else if (currentState == GameState.INSTRUCTIONS) {
                     helpPage = Math.max(0, helpPage - 1);
+                } else if (currentState == GameState.PROGRESS) {
+                    showProgressShip(progressShip - 1);
                 } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() > 0) {
                     spawnRate = spawnRate.previous();      // the arrow keys change the spawn amount (stopping at FEW)
                     saveProgress();
@@ -1874,6 +1926,8 @@ public class GamePanel extends JPanel {
                     player.setMovingRight(true);
                 } else if (currentState == GameState.INSTRUCTIONS) {
                     helpPage = Math.min(2, helpPage + 1);
+                } else if (currentState == GameState.PROGRESS) {
+                    showProgressShip(progressShip + 1);
                 } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() < SpawnRate.values().length - 1) {
                     spawnRate = spawnRate.next();          // (stopping at MANY)
                     saveProgress();
@@ -1998,6 +2052,9 @@ public class GamePanel extends JPanel {
         bind("pressed Q", () -> {
             if (currentState == GameState.PLAYING) {
                 useNova();
+            } else if (currentState == GameState.MENU || currentState == GameState.PAUSED) {
+                sound.play(SoundManager.Sfx.CLICK);
+                openProgress(currentState);         // Q = quests, from the menu or the pause screen
             }
         });
 
@@ -2041,6 +2098,10 @@ public class GamePanel extends JPanel {
             case SETTINGS:
             case ACHIEVEMENTS:
                 currentState = GameState.MENU;
+                break;
+
+            case PROGRESS:
+                closeProgress();
                 break;
 
             case STORY:
@@ -2091,6 +2152,10 @@ public class GamePanel extends JPanel {
             case MODE_SELECT:
                 saveProgress();
                 currentState = GameState.MENU;
+                break;
+
+            case PROGRESS:
+                closeProgress();
                 break;
 
             case DIFFICULTY_SELECT:
@@ -2236,6 +2301,8 @@ public class GamePanel extends JPanel {
                     currentState = GameState.MODE_SELECT;
                 } else if (HANGAR_BUTTON.contains(x, y)) {
                     openHangarFromMenu();
+                } else if (QUESTS_BUTTON.contains(x, y)) {
+                    openProgress(GameState.MENU);
                 } else if (ACHIEVEMENTS_BUTTON.contains(x, y)) {
                     currentState = GameState.ACHIEVEMENTS;
                 } else if (SETTINGS_BUTTON.contains(x, y)) {
@@ -2324,6 +2391,17 @@ public class GamePanel extends JPanel {
                 }
                 break;
 
+            case PROGRESS:
+                for (int i = 0; i < PROGRESS_SHIP_TABS.length; i++) {
+                    if (PROGRESS_SHIP_TABS[i].contains(x, y)) {
+                        showProgressShip(i);
+                    }
+                }
+                if (HELP_BACK_BUTTON.contains(x, y)) {
+                    closeProgress();
+                }
+                break;
+
             case UPGRADE:
                 for (int i = 0; i < Upgrades.TRACKS; i++) {
                     if (BUY_BUTTONS[i].contains(x, y) && i == Upgrades.CANNONS && hangar.isMaxed(i)) {
@@ -2374,6 +2452,8 @@ public class GamePanel extends JPanel {
                     togglePause();
                 } else if (MODAL_SECONDARY.contains(x, y)) {
                     returnToMenu();
+                } else if (PAUSE_QUESTS_BUTTON.contains(x, y)) {
+                    openProgress(GameState.PAUSED);
                 }
                 break;
 
@@ -2408,10 +2488,15 @@ public class GamePanel extends JPanel {
 
         switch (currentState) {
             case MENU:
-                return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, ACHIEVEMENTS_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON};
+                return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, QUESTS_BUTTON, ACHIEVEMENTS_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON};
             case ACHIEVEMENTS: {
                 Rectangle[] list = Arrays.copyOf(ACHIEVEMENT_TILES, ACHIEVEMENT_TILES.length + 1);
                 list[ACHIEVEMENT_TILES.length] = HELP_BACK_BUTTON;
+                return list;
+            }
+            case PROGRESS: {
+                Rectangle[] list = Arrays.copyOf(PROGRESS_SHIP_TABS, PROGRESS_SHIP_TABS.length + 1);
+                list[PROGRESS_SHIP_TABS.length] = HELP_BACK_BUTTON;
                 return list;
             }
             case MODE_SELECT:
@@ -2450,6 +2535,7 @@ public class GamePanel extends JPanel {
                 return list.toArray(new Rectangle[0]);
             }
             case PAUSED:
+                return new Rectangle[]{MODAL_PRIMARY, MODAL_SECONDARY, PAUSE_QUESTS_BUTTON};
             case MISSION_COMPLETE:
             case GAME_OVER:
                 return new Rectangle[]{MODAL_PRIMARY, MODAL_SECONDARY};

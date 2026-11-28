@@ -1,5 +1,7 @@
 package starlightrescue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 /**
@@ -281,6 +283,28 @@ public class Upgrades {
         {1, 3, 5, 7, 9},        // engines
         {1, 3, 5, 7, 9}         // hull armor
     };
+
+    /**
+     * The upgrades that open up on this ship at this player level, e.g. "CANNONS" or
+     * "HULL MK II" (for the pilot level screen). Empty if nothing new opens then.
+     */
+    public List<String> unlocksAt(int playerLevel) {
+
+        List<String> names = new ArrayList<>();
+
+        for (int t = 0; t < TRACKS; t++) {
+            for (int step = 0; base[t] + step < MAX[t]; step++) {
+                if (LEVEL_NEEDED[t][step] == playerLevel) {
+                    String name = (base[t] + step >= PHASE1[t]) ? PHASE2_NAMES[t] : NAMES[t];
+                    if (!names.contains(name)) {
+                        names.add(name);
+                    }
+                }
+            }
+        }
+
+        return names;
+    }
 
     /** The experience needed to reach each player level (index 0 = level 1). */
     public static final int[] LEVEL_XP = {0, 120, 300, 560, 900, 1350, 1900, 2600, 3500, 4600};
