@@ -35,12 +35,13 @@ public final class SoundManager {
         TELEPORT, REFUND, UNDO, MISSION_COMPLETE, GAME_OVER, VICTORY
     }
 
-    // OPENING plays on the opening screen, the story pages and the ending; MENU on every menu.
+    // INTRO plays on the title screen; OPENING on the story pages, the wormhole flight and the ending;
+    // MENU (Starlight Lounge) in the lobby and every menu.
     // LEVEL missions have a track for each difficulty, each Adventure mission has its own
     // (EARTH_DEFENSE, DEEP_SPACE, MOTHERSHIP, WORMHOLE), and Hardcore has one.
     // BOSS_FIGHT takes over in Adventure and Hardcore while a boss is on screen.
     public enum Track {
-        NONE, OPENING, MENU, LEVEL_EASY, LEVEL_MODERATE, LEVEL_HARD,
+        NONE, INTRO, OPENING, MENU, LEVEL_EASY, LEVEL_MODERATE, LEVEL_HARD,
         EARTH_DEFENSE, DEEP_SPACE, MOTHERSHIP, WORMHOLE, HARDCORE, BOSS_FIGHT
     }
 

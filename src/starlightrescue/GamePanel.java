@@ -698,10 +698,13 @@ public class GamePanel extends JPanel {
                 break;
 
             case OPENING:
+                track = SoundManager.Track.INTRO;     // the intro screen has its own theme (Deep Space)
+                break;
+
             case STORY:
             case VICTORY:
             case WARP:
-                track = SoundManager.Track.OPENING;   // the opening screen, story pages, the wormhole flight and the ending
+                track = SoundManager.Track.OPENING;   // the story pages, the wormhole flight and the ending
                 break;
 
             default:
