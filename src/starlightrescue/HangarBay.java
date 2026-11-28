@@ -36,6 +36,7 @@ final class HangarBay {
     static final int WIDTH = 302;
     static final int BAY_TOP = 80;
     static final int TABS_TOP = 114;
+    static final int TWO_ROWS_TOP = 140;   // under the Level tab's second row (Easy, Moderate, Hard)
     static final int BAY_BOTTOM = 234;
     static final int SHIP_X = 175;
     static final double SHIP_SCALE = 2.3;
@@ -87,9 +88,9 @@ final class HangarBay {
     // WHERE THE BAY IS
     // ---------------------------------------------------------------
 
-    /** True while the hangar's ship tabs show: the bay then starts just below them. */
-    void setUnderTabs(boolean tabs) {
-        top = tabs ? TABS_TOP : BAY_TOP;
+    /** How many rows of ship tabs show above the bay (0, 1 or 2): the bay starts just below them. */
+    void setUnderTabs(int rows) {
+        top = (rows <= 0) ? BAY_TOP : (rows == 1 ? TABS_TOP : TWO_ROWS_TOP);
         height = BAY_BOTTOM - top;
         shipY = shipYFor(top);
     }

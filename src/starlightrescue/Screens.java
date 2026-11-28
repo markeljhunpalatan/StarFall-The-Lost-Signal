@@ -318,7 +318,7 @@ final class Screens {
 
         g.setFont(UI.bold(14f));
         g.setColor(UI.TEXT);
-        UI.center(g, modeName(game.hangarMode) + " ship - " + capitalize(game.hangar.getShipClass()) + " class", 150, 478);
+        UI.center(g, game.shipName() + " ship - " + capitalize(game.hangar.getShipClass()) + " class", 150, 478);
         g.setFont(UI.plain(12f));
         g.setColor(UI.MUTED);
         UI.center(g, "Level " + game.hangar.playerLevel() + "  ·  " + game.hangar.purchases() + " of "
@@ -780,7 +780,7 @@ final class Screens {
 
     private void drawDifficultySelect(Graphics2D g) {
 
-        heading(g, "Choose a difficulty", "Each level gives you its own ship. Credits you earn still go to your wallet.", 92);
+        heading(g, "Choose a difficulty", "Each difficulty has its own ship and credits. Upgrade it, then launch.", 92);
 
         Color[] accents = {UI.GREEN, UI.GOLD, UI.RED};
         Rectangle[] cards = {GamePanel.EASY_BUTTON, GamePanel.MODERATE_BUTTON, GamePanel.HARD_BUTTON};
@@ -807,7 +807,8 @@ final class Screens {
 
         UI.segments(g, cx - 60, c.y + 64, 120, 8, 5, threat, accent);
 
-        Upgrades ship = Upgrades.preset(m.preset[0], m.preset[1], m.preset[2], m.preset[3]);
+        GamePanel.Difficulty difficulty = GamePanel.Difficulty.values()[java.util.Arrays.asList(Mission.LEVELS).indexOf(m)];
+        Upgrades ship = game.levelProfiles.get(difficulty);
 
         String hazards = (m.meteorEvery > 0) ? "Rocks, meteors" : (m.asteroidEvery > 0 ? "Asteroids" : "None");
         String bosses = m.bosses.isEmpty() ? "None" : String.valueOf(m.bosses.size());
@@ -815,13 +816,11 @@ final class Screens {
         String[][] rows = {
             {"Aliens", String.valueOf(m.target)},
             {"Bosses", bosses},
-            {"Hazards", hazards},
-            {"Weapon", weaponName(ship.getWeaponLevel())},
-            {"Lives", String.valueOf(GamePanel.START_LIVES + ship.getHullLevel())}
+            {"Hazards", hazards}
         };
 
         for (int i = 0; i < rows.length; i++) {
-            int ry = c.y + 108 + i * 32;
+            int ry = c.y + 104 + i * 28;
             g.setFont(UI.plain(13f));
             g.setColor(UI.MUTED);
             g.drawString(rows[i][0], c.x + 22, ry);
@@ -830,13 +829,59 @@ final class Screens {
             UI.right(g, rows[i][1], c.x + c.width - 22, ry);
 
             g.setColor(UI.alpha(Color.WHITE, 18));
-            g.fillRect(c.x + 22, ry + 11, c.width - 44, 1);
+            g.fillRect(c.x + 22, ry + 10, c.width - 44, 1);
         }
+
+        // This difficulty's own ship: its class, level, weapon and lives, and its credits
+        int sy = c.y + 178;
+        g.setColor(new Color(0, 0, 0, 70));
+        g.fillRoundRect(c.x + 14, sy, c.width - 28, 82, 14, 14);
+        g.setColor(UI.alpha(accent, 70));
+        g.drawRoundRect(c.x + 14, sy, c.width - 28, 82, 14, 14);
+
+        // Header: "YOUR SHIP · 20% off" on the left, its credits on the right
+        g.setFont(UI.bold(10f));
+        g.setColor(accent);
+        UI.trackedLeft(g, "YOUR SHIP", c.x + 26, sy + 18, 1.5f);
+        int hx = c.x + 26 + UI.width(g, "YOUR SHIP") + (int) (1.5f * 8);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        g.drawString("  ·  " + priceNote(ship), hx, sy + 18);
+
+        g.setFont(UI.bold(12f));
+        String credits = fmtShort(ship.getCredits());
+        int cw = UI.width(g, credits);
+        UI.icon(g, UI.Icon.COIN, c.x + c.width - 26 - cw - 9, sy + 14, 8, UI.GOLD);
+        g.setColor(UI.GOLD);
+        UI.right(g, credits, c.x + c.width - 26, sy + 18);
+
+        // The ship itself, then its class, level, weapon, lives and upgrades
+        game.previewPlayer.setLoadout(ship);
+        Graphics2D sg = (Graphics2D) g.create();
+        sg.clipRect(c.x + 16, sy + 24, 74, 56);
+        sg.translate(c.x + 60, sy + 52);
+        sg.scale(0.8, 0.8);
+        game.previewPlayer.placeAt(-30, -20);
+        game.previewPlayer.draw(sg);
+        sg.dispose();
+
+        g.setFont(UI.bold(14f));
+        g.setColor(Color.WHITE);
+        g.drawString(capitalize(ship.getShipClass()), c.x + 96, sy + 42);
+        g.setFont(UI.plain(11f));
+        g.setColor(UI.TEXT);
+        g.drawString("Lv " + ship.playerLevel() + "  ·  " + weaponName(ship.getWeaponLevel()), c.x + 96, sy + 58);
+        g.setColor(UI.MUTED);
+        g.drawString((GamePanel.START_LIVES + ship.getHullLevel()) + " lives  ·  " + ship.purchases() + "/" + Upgrades.totalSteps() + " upgrades", c.x + 96, sy + 73);
 
         if (!m.bosses.isEmpty()) {
             g.setFont(UI.plain(12f));
             g.setColor(UI.alpha(accent, 230));
             UI.center(g, bossList(m), cx, c.y + 280);
+        } else {
+            g.setFont(UI.plain(12f));
+            g.setColor(UI.alpha(accent, 230));
+            UI.center(g, "A gentle start: no boss", cx, c.y + 280);
         }
 
         g.setFont(UI.plain(12f));
@@ -845,6 +890,32 @@ final class Screens {
         g.setFont(UI.bold(13f));
         g.setColor(UI.GOLD);
         UI.right(g, fmt(game.bestFor(bestKey)), c.x + c.width - 20, c.y + c.height - 16);
+    }
+
+    /** How a ship's prices compare to the usual ones: "20% off", "usual prices", "25% pricier". */
+    static String priceNote(Upgrades ship) {
+
+        int percent = (int) Math.round((ship.getPriceScale() - 1.0) * 100);
+
+        if (percent < 0) {
+            return (-percent) + "% off";
+        } else if (percent > 0) {
+            return percent + "% pricier";
+        }
+
+        return "usual prices";
+    }
+
+    /** Credits in a few characters, for small spaces: 950, 12.4K, 5.0M. */
+    static String fmtShort(int amount) {
+
+        if (amount >= 1_000_000) {
+            return String.format(java.util.Locale.ROOT, "%.1fM", amount / 1_000_000.0);
+        } else if (amount >= 10_000) {
+            return String.format(java.util.Locale.ROOT, "%.1fK", amount / 1_000.0);
+        }
+
+        return fmt(amount);
     }
 
     private static String bossList(Mission m) {
@@ -1127,7 +1198,9 @@ final class Screens {
         String[][] stats = {
             {"Adventure", "Level " + game.profiles.get(GamePanel.GameMode.ADVENTURE).playerLevel()},
             {"Hardcore", "Level " + game.profiles.get(GamePanel.GameMode.HARDCORE).playerLevel()},
-            {"Level mode", "Level " + game.profiles.get(GamePanel.GameMode.LEVEL).playerLevel()},
+            {"Level ships", "Lv " + game.levelProfiles.get(GamePanel.Difficulty.EASY).playerLevel()
+                            + " · " + game.levelProfiles.get(GamePanel.Difficulty.MODERATE).playerLevel()
+                            + " · " + game.levelProfiles.get(GamePanel.Difficulty.HARD).playerLevel()},
             {"Medals", game.achievements.unlockedCount() + " / " + Achievements.total()}
         };
         for (int i = 0; i < stats.length; i++) {
@@ -1673,7 +1746,14 @@ final class Screens {
         g.drawString(title, 22, 46);
         int titleWidth = UI.width(g, title);
 
-        String subtitle = fromMenu ? "Build your ship. Each mode keeps its own ship and credits." : stationSubtitle();
+        String subtitle;
+        if (fromMenu && game.hangarMode == GamePanel.GameMode.LEVEL) {
+            subtitle = game.shipName() + " ship: its own credits, " + priceNote(game.hangar) + ".";
+        } else if (fromMenu) {
+            subtitle = "Build your ship. Each mode, and each level, keeps its own.";
+        } else {
+            subtitle = stationSubtitle();
+        }
         UI.fit(g, subtitle, false, 13f, 500 - titleWidth - 30);
         g.setColor(UI.MUTED);
         g.drawString(subtitle, 22 + titleWidth + 14, 44);
@@ -1713,6 +1793,8 @@ final class Screens {
             launch = "BACK TO MENU";
         } else if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
             launch = "BACK TO BATTLE";
+        } else if (game.selectedMode == GamePanel.GameMode.LEVEL) {
+            launch = "LAUNCH LEVEL";
         } else {
             launch = "LAUNCH MISSION";
         }
@@ -1724,7 +1806,9 @@ final class Screens {
         int x = keyHint(g, 18, 542, "Buy", "1-4");
         keyHint(g, x + 8, 542, "Sell", "Shift", "1-4");
         x = keyHint(g, 18, 570, "Undo", "Z");
-        if (!fromMenu) {
+        if (!fromMenu && game.selectedMode == GamePanel.GameMode.LEVEL) {
+            keyHint(g, x + 8, 570, "Back", "Esc");
+        } else if (!fromMenu) {
             keyHint(g, x + 8, 570, "Repair", "R");
         }
 
@@ -1735,6 +1819,10 @@ final class Screens {
 
         if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
             return "Boss " + game.hardcoreBossesDefeated + " destroyed. Repair and upgrade.";
+        }
+
+        if (game.selectedMode == GamePanel.GameMode.LEVEL) {
+            return game.shipName() + " next  ·  its own ship, " + priceNote(game.hangar);
         }
 
         int next = game.missionIndex + 1;
@@ -1776,7 +1864,7 @@ final class Screens {
         UI.glass(g, 16, 72, 318, 450, 20, UI.CYAN);
 
         // The ship in its bay, with the robot arms that fit your upgrades (below the ship tabs, if they show)
-        game.bay.setUnderTabs(game.hangarFromMenu);
+        game.bay.setUnderTabs(!game.hangarFromMenu ? 0 : (game.hangarMode == GamePanel.GameMode.LEVEL ? 2 : 1));
         game.bay.draw(g, game.previewPlayer);
 
         g.setFont(UI.bold(17f));
@@ -1812,7 +1900,7 @@ final class Screens {
             partRow(g, part, 34, 424 + part * 18, 282);
         }
 
-        if (game.hangarFromMenu && game.hangarMode == GamePanel.GameMode.ADVENTURE) {
+        if (game.canResetShip()) {
             drawResetButton(g);
         } else if (game.hangarFromMenu) {
             g.setFont(UI.plain(12f));
@@ -1837,37 +1925,53 @@ final class Screens {
         }
     }
 
-    /** The Adventure profile tabs: the main-menu hangar can show the Adventure or the Hardcore ship. */
+    /**
+     * The ship tabs of the main-menu hangar: Adventure, Hardcore and Level. Under Level,
+     * a second row picks the Easy, Moderate or Hard ship (each has its own).
+     */
     private void drawHangarTabs(Graphics2D g) {
 
-        Rectangle[] tabs = {GamePanel.HANGAR_TAB_ADVENTURE, GamePanel.HANGAR_TAB_HARDCORE};
-        GamePanel.GameMode[] modes = {GamePanel.GameMode.ADVENTURE, GamePanel.GameMode.HARDCORE};
+        Rectangle[] tabs = {GamePanel.HANGAR_TAB_ADVENTURE, GamePanel.HANGAR_TAB_HARDCORE, GamePanel.HANGAR_TAB_LEVEL};
+        GamePanel.GameMode[] modes = {GamePanel.GameMode.ADVENTURE, GamePanel.GameMode.HARDCORE, GamePanel.GameMode.LEVEL};
 
         for (int i = 0; i < tabs.length; i++) {
-
-            Rectangle r = tabs[i];
-            boolean selected = (game.hangarMode == modes[i]);
-
-            if (selected) {
-                g.setPaint(new GradientPaint(r.x, r.y, UI.CYAN, r.x, r.y + r.height, UI.mix(UI.CYAN, UI.DARK, 0.5)));
-                g.fillRoundRect(r.x, r.y, r.width, r.height, r.height, r.height);
-            } else {
-                rowBackground(g, r, UI.CYAN, hover(r));
-            }
-
-            g.setFont(UI.bold(12f));
-            g.setColor(selected ? UI.DARK : UI.TEXT);
-            UI.center(g, modeName(modes[i]) + " ship", r.x + r.width / 2, r.y + 19);
+            pillTab(g, tabs[i], modeName(modes[i]), UI.CYAN, game.hangarMode == modes[i], 12f);
         }
+
+        if (game.hangarMode != GamePanel.GameMode.LEVEL) {
+            return;
+        }
+
+        Color[] accents = {UI.GREEN, UI.GOLD, UI.RED};
+        GamePanel.Difficulty[] levels = GamePanel.Difficulty.values();
+
+        for (int i = 0; i < levels.length; i++) {
+            pillTab(g, GamePanel.LEVEL_SHIP_TABS[i], capitalize(levels[i].name()), accents[i], game.hangarDifficulty == levels[i], 11f);
+        }
+    }
+
+    /** A rounded tab: filled with its colour when picked, a soft outline otherwise. */
+    private void pillTab(Graphics2D g, Rectangle r, String label, Color accent, boolean selected, float size) {
+
+        if (selected) {
+            g.setPaint(new GradientPaint(r.x, r.y, accent, r.x, r.y + r.height, UI.mix(accent, UI.DARK, 0.5)));
+            g.fillRoundRect(r.x, r.y, r.width, r.height, r.height, r.height);
+        } else {
+            rowBackground(g, r, accent, hover(r));
+        }
+
+        g.setFont(UI.bold(size));
+        g.setColor(selected ? UI.DARK : UI.TEXT);
+        UI.center(g, label, r.x + r.width / 2, r.y + r.height / 2 + (int) (size * 0.36f));
     }
 
     /** Adventure's reset, in the main-menu hangar. It needs two clicks, like the settings reset. */
     private void drawResetButton(Graphics2D g) {
 
         boolean armed = game.resetConfirmTimer > 0;
-        boolean canReset = game.hangar.purchases() > 0;
+        boolean canReset = game.hangar.creditsSpent() > 0;
 
-        String label = armed ? "CLICK AGAIN TO CONFIRM" : "RESET ADVENTURE UPGRADES";
+        String label = armed ? "CLICK AGAIN TO CONFIRM" : "RESET " + game.shipName().toUpperCase() + " UPGRADES";
         UI.button(g, GamePanel.MENU_RESET_BUTTON, label, UI.VIOLET,
                   hover(GamePanel.MENU_RESET_BUTTON) && canReset, canReset, game.frame);
     }
@@ -1997,17 +2101,16 @@ final class Screens {
 
             UI.button(g, buy, "", buyColor, hover(buy), afford, game.frame);
 
-            g.setFont(UI.bold(13f));
-            g.setColor(afford ? Color.WHITE : UI.MUTED);
-            g.drawString(levelLocked ? "LOCKED" : "BUY", buy.x + 14, buy.y + 22);
-
             if (levelLocked) {
                 // Needs a higher player level: show the level instead of the price
-                String need = "LEVEL " + ship.levelNeeded(track);
                 g.setFont(UI.bold(12f));
                 g.setColor(UI.VIOLET);
-                g.drawString(need, buy.x + buy.width - 12 - UI.width(g, need), buy.y + 22);
+                UI.center(g, "NEEDS LEVEL " + ship.levelNeeded(track), buy.x + buy.width / 2, buy.y + 22);
             } else {
+                g.setFont(UI.bold(13f));
+                g.setColor(afford ? Color.WHITE : UI.MUTED);
+                g.drawString("BUY", buy.x + 14, buy.y + 22);
+
                 String price = fmt(ship.nextCost(track));
                 g.setFont(UI.bold(13f));
                 int pw = UI.width(g, price);

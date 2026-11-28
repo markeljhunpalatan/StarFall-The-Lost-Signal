@@ -104,6 +104,11 @@ public class GamePanel extends JPanel {
         return mode.name().toLowerCase() + ".";
     }
 
+    /** Where each LEVEL difficulty's own ship is saved, e.g. "level.easy.". */
+    static String levelPrefix(Difficulty difficulty) {
+        return "level." + difficulty.name().toLowerCase() + ".";
+    }
+
     /** Scouts and Zig-zags start shooting once the mission is this far through (0.0 - 1.0). */
 
     static final int BANNER_TIME = 170;
@@ -133,6 +138,9 @@ public class GamePanel extends JPanel {
     enum GameMode {
         HARDCORE, ADVENTURE, LEVEL
     }
+
+    /** The modes with a single ship each (LEVEL has one per difficulty, see levelProfiles). */
+    static final GameMode[] SHIP_MODES = {GameMode.ADVENTURE, GameMode.HARDCORE};
 
     enum Difficulty {
         EASY, MODERATE, HARD
@@ -229,8 +237,13 @@ public class GamePanel extends JPanel {
     static final Rectangle LAUNCH_BUTTON = new Rectangle(300, 540, 200, 46);
 
     // The hangar's profile tabs (main-menu hangar only), and the Adventure reset (same spot as repair)
-    static final Rectangle HANGAR_TAB_ADVENTURE = new Rectangle(32, 80, 140, 28);
-    static final Rectangle HANGAR_TAB_HARDCORE = new Rectangle(182, 80, 140, 28);
+    static final Rectangle HANGAR_TAB_ADVENTURE = new Rectangle(32, 80, 92, 28);
+    static final Rectangle HANGAR_TAB_HARDCORE = new Rectangle(130, 80, 92, 28);
+    static final Rectangle HANGAR_TAB_LEVEL = new Rectangle(228, 80, 94, 28);
+    // Under the LEVEL tab, when it is picked: the Easy, Moderate and Hard ships
+    static final Rectangle[] LEVEL_SHIP_TABS = {
+        new Rectangle(32, 113, 92, 22), new Rectangle(130, 113, 92, 22), new Rectangle(228, 113, 94, 22)
+    };
     static final Rectangle MENU_RESET_BUTTON = new Rectangle(30, 478, 290, 38);
 
     // Full-power abilities: Q and E, shown in the top-right corner (click them too)
@@ -342,11 +355,15 @@ public class GamePanel extends JPanel {
 
     // Upgrades and money.
     //   hangar   = your wallet and your ship. It is SAVED to disk.
-    //   upgrades = the ship used in the current run. This is the hangar ship,
-    //              except in LEVEL mode, where every difficulty has a fixed ship.
-    // One profile per mode (ADVENTURE, HARDCORE, LEVEL). "hangar" is the profile in use right now.
-    final EnumMap<GameMode, Upgrades> profiles = new EnumMap<>(GameMode.class);
+    //   upgrades = the ship used in the current run (the hangar ship).
+    // ADVENTURE and HARDCORE each have a profile, and so does every LEVEL difficulty:
+    // Easy, Moderate and Hard each keep their own ship and credits, starting from that
+    // difficulty's ship, at that difficulty's prices (see Mission.LEVELS).
+    // "hangar" is the profile in use right now.
+    final EnumMap<GameMode, Upgrades> profiles = new EnumMap<>(GameMode.class);          // ADVENTURE and HARDCORE
+    final EnumMap<Difficulty, Upgrades> levelProfiles = new EnumMap<>(Difficulty.class);  // EASY, MODERATE and HARD
     GameMode hangarMode = GameMode.ADVENTURE;     // which profile the hangar shows
+    Difficulty hangarDifficulty = Difficulty.EASY;  // ... and which Level ship, when that is LEVEL
     Upgrades hangar;
     Upgrades upgrades;
 
@@ -516,8 +533,12 @@ public class GamePanel extends JPanel {
         setBackground(Color.BLACK);
         setFocusable(true);
 
-        for (GameMode mode : GameMode.values()) {
+        for (GameMode mode : SHIP_MODES) {
             profiles.put(mode, new Upgrades());
+        }
+
+        for (Difficulty difficulty : Difficulty.values()) {
+            levelProfiles.put(difficulty, Mission.LEVELS[difficulty.ordinal()].newLevelShip());
         }
 
         hangar = profiles.get(GameMode.ADVENTURE);
@@ -775,20 +796,81 @@ public class GamePanel extends JPanel {
         finalWaveCooldown = 0;
     }
 
-    /** Switches to the upgrade profile of a mode. Undo can't cross profiles, so its history is cleared. */
+    /** Switches to the upgrade profile of a mode (for LEVEL, the Level ship last shown). */
     void setHangarMode(GameMode mode) {
+        setHangarShip(mode, hangarDifficulty);
+    }
+
+    /** Switches to a profile: a mode's ship, or for LEVEL a difficulty's ship. Undo can't cross profiles, so its history is cleared. */
+    void setHangarShip(GameMode mode, Difficulty difficulty) {
 
         hangarMode = mode;
-        hangar = profiles.get(mode);
+        hangarDifficulty = difficulty;
+        hangar = profileFor(mode, difficulty);
         undoStack.clear();
         previewPlayer.setLoadout(hangar);
+    }
+
+    /** A hangar tab was clicked: show that ship (a half-done reset is cancelled). */
+    void switchHangarShip(GameMode mode, Difficulty difficulty) {
+
+        if (mode == hangarMode && difficulty == hangarDifficulty) {
+            return;
+        }
+
+        sound.play(SoundManager.Sfx.CLICK);
+        resetConfirmTimer = 0;
+        bay.reset();
+        setHangarShip(mode, difficulty);
+    }
+
+    /** Which Level ship tab (0 = Easy, 1 = Moderate, 2 = Hard) is at this point, or -1. */
+    static int levelShipTabAt(int x, int y) {
+
+        for (int i = 0; i < LEVEL_SHIP_TABS.length; i++) {
+            if (LEVEL_SHIP_TABS[i].contains(x, y)) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /** The ship and wallet of a mode (for LEVEL, of one difficulty). */
+    Upgrades profileFor(GameMode mode, Difficulty difficulty) {
+        return (mode == GameMode.LEVEL) ? levelProfiles.get(difficulty) : profiles.get(mode);
+    }
+
+    /** The name of the ship the hangar shows, e.g. "Adventure" or "Easy level". */
+    String shipName() {
+        return (hangarMode == GameMode.LEVEL)
+            ? capitalizeName(hangarDifficulty.name()) + " level"
+            : capitalizeName(hangarMode.name());
+    }
+
+    private static String capitalizeName(String name) {
+        return name.charAt(0) + name.substring(1).toLowerCase();
+    }
+
+    /**
+     * LEVEL mode, before a run: the upgrade station opens with this difficulty's own
+     * ship and credits. LAUNCH starts the level; ESC goes back to the difficulties.
+     */
+    void openLevelStation(Difficulty difficulty) {
+
+        selectedMode = GameMode.LEVEL;
+        selectedDifficulty = difficulty;
+        setHangarShip(GameMode.LEVEL, difficulty);
+        parts.reset();              // a Level run always starts with every part at 100%
+        sound.play(SoundManager.Sfx.CLICK);
+        openUpgradeStation(() -> startGame(GameMode.LEVEL, difficulty), false);
     }
 
     void startGame(GameMode mode, Difficulty difficulty) {
 
         selectedMode = mode;
         selectedDifficulty = difficulty;
-        setHangarMode(mode);
+        setHangarShip(mode, difficulty);
 
         initializeGameObjects();
 
@@ -851,12 +933,11 @@ public class GamePanel extends JPanel {
 
         mission = m;
 
-        // LEVEL mode gives you a fixed ship; the campaign keeps the ship you built
+        // You fly the ship you built: the campaign's, or this LEVEL difficulty's own ship.
+        // A Level run always starts with every part at 100%.
+        upgrades = hangar;
         if (m.preset != null) {
-            upgrades = Upgrades.preset(m.preset[0], m.preset[1], m.preset[2], m.preset[3]);
             parts.reset();
-        } else {
-            upgrades = hangar;
         }
 
         // A retry puts the ship parts back the way they were when the mission began
@@ -1017,8 +1098,8 @@ public class GamePanel extends JPanel {
 
         } else if (selectedMode == GameMode.LEVEL && selectedDifficulty != Difficulty.HARD) {
 
-            // Easy -> Moderate -> Hard
-            startGame(GameMode.LEVEL, Difficulty.values()[selectedDifficulty.ordinal() + 1]);
+            // Easy -> Moderate -> Hard: the next difficulty's station opens, with its own ship
+            openLevelStation(Difficulty.values()[selectedDifficulty.ordinal() + 1]);
 
         } else {
 
@@ -1104,11 +1185,6 @@ public class GamePanel extends JPanel {
 
         parts.reset();
 
-        // LEVEL ships are fixed by difficulty, so the menu hangar shows an Adventure or Hardcore ship
-        if (hangarMode == GameMode.LEVEL) {
-            setHangarMode(GameMode.ADVENTURE);
-        }
-
         openUpgradeStation(() -> {
             saveProgress();
             currentState = GameState.MENU;
@@ -1189,40 +1265,49 @@ public class GamePanel extends JPanel {
         }
     }
 
+    /** The main-menu hangar can reset the Adventure ship and each Level ship (not Hardcore's). */
+    boolean canResetShip() {
+        return hangarFromMenu && hangarMode != GameMode.HARDCORE;
+    }
+
     /**
-     * Adventure only, from the main-menu hangar: every upgrade goes back to a brand
-     * new ship. The full price is refunded, so the next build starts from scratch.
+     * From the main-menu hangar (Adventure or a Level ship): every upgrade goes back
+     * to how the ship started (brand new, or the Level difficulty's ship). The full
+     * price is refunded, so the next build starts from scratch.
      * Asks for a second click first, so it can't happen by accident.
      */
     void resetAdventureUpgrades() {
 
-        if (!hangarFromMenu || hangarMode != GameMode.ADVENTURE) {
+        if (!canResetShip()) {
             return;
         }
 
-        if (hangar.purchases() == 0) {
+        String name = shipName().toUpperCase();
+
+        if (hangar.creditsSpent() == 0) {
             sound.play(SoundManager.Sfx.EMPTY);
-            showUpgradeMessage("ADVENTURE SHIP IS ALREADY BRAND NEW", false);
+            showUpgradeMessage(hangarMode == GameMode.ADVENTURE ? "ADVENTURE SHIP IS ALREADY BRAND NEW"
+                                                                : name + " SHIP HAS NO UPGRADES YET", false);
             return;
         }
 
         if (resetConfirmTimer == 0) {
             resetConfirmTimer = 180;
             sound.play(SoundManager.Sfx.CLICK);
-            showUpgradeMessage("CLICK RESET AGAIN TO START ADVENTURE UPGRADES OVER", false);
+            showUpgradeMessage("CLICK RESET AGAIN TO START " + name + " UPGRADES OVER", false);
             return;
         }
 
         resetConfirmTimer = 0;
         int refund = hangar.creditsSpent();
 
-        pushUndo("ADVENTURE RESET");
+        pushUndo(name + " RESET");
         hangar.resetUpgrades();
 
         previewPlayer.setLoadout(hangar);
         sound.play(SoundManager.Sfx.REFUND);
         bay.remove(-1, "ALL UPGRADES");
-        showUpgradeMessage("ADVENTURE UPGRADES RESET  +" + refund + " CREDITS", true);
+        showUpgradeMessage(name + " UPGRADES RESET  +" + refund + " CREDITS", true);
         saveProgress();
     }
 
@@ -1330,11 +1415,6 @@ public class GamePanel extends JPanel {
         boss = null;
         mission = null;
         storyOnFinish = null;
-
-        // The menu's hangar shows an Adventure or Hardcore ship (a LEVEL run has fixed ships)
-        if (hangarMode == GameMode.LEVEL) {
-            setHangarMode(GameMode.ADVENTURE);
-        }
 
         bullets.clear();
         enemies.clear();
@@ -1454,9 +1534,11 @@ public class GamePanel extends JPanel {
 
             saveData.load(in);
 
-            for (GameMode mode : GameMode.values()) {
+            for (GameMode mode : SHIP_MODES) {
                 profiles.get(mode).load(saveData, profilePrefix(mode));
             }
+
+            loadLevelShips();
 
             achievements.load(saveData);
 
@@ -1469,6 +1551,27 @@ public class GamePanel extends JPanel {
         }
     }
 
+    /**
+     * Reads each LEVEL difficulty's ship. A save from before Level ships had one shared
+     * Level profile ("level."): each difficulty takes its credits, level and quest (its
+     * ship starts as that difficulty's ship), and the old keys are removed.
+     */
+    void loadLevelShips() {
+
+        boolean oldShared = Upgrades.saved(saveData, profilePrefix(GameMode.LEVEL));
+
+        for (Difficulty difficulty : Difficulty.values()) {
+            String prefix = Upgrades.saved(saveData, levelPrefix(difficulty)) || !oldShared
+                ? levelPrefix(difficulty)
+                : profilePrefix(GameMode.LEVEL);
+            levelProfiles.get(difficulty).load(saveData, prefix);
+        }
+
+        if (oldShared) {
+            Upgrades.forget(saveData, profilePrefix(GameMode.LEVEL));
+        }
+    }
+
     /** Writes best scores, the wallet, the ship's upgrades and the sound settings to disk. */
     synchronized void saveProgress() {
 
@@ -1476,8 +1579,12 @@ public class GamePanel extends JPanel {
             return;
         }
 
-        for (GameMode mode : GameMode.values()) {
+        for (GameMode mode : SHIP_MODES) {
             profiles.get(mode).save(saveData, profilePrefix(mode));
+        }
+
+        for (Difficulty difficulty : Difficulty.values()) {
+            levelProfiles.get(difficulty).save(saveData, levelPrefix(difficulty));
         }
 
         achievements.save(saveData);
@@ -1497,6 +1604,10 @@ public class GamePanel extends JPanel {
     void resetSaveData() {
 
         for (Upgrades profile : profiles.values()) {
+            profile.reset();
+        }
+
+        for (Upgrades profile : levelProfiles.values()) {
             profile.reset();
         }
 
@@ -1815,7 +1926,7 @@ public class GamePanel extends JPanel {
                 break;
 
             case DIFFICULTY_SELECT:
-                startGame(GameMode.LEVEL, Difficulty.MODERATE);
+                openLevelStation(Difficulty.MODERATE);
                 break;
 
             case INSTRUCTIONS:
@@ -1881,6 +1992,12 @@ public class GamePanel extends JPanel {
             case UPGRADE:
                 if (hangarFromMenu) {
                     finishUpgradeStation();
+                } else if (selectedMode == GameMode.LEVEL) {
+                    // The station before a Level run: back to the difficulties (nothing is lost)
+                    upgradeOnFinish = null;
+                    undoStack.clear();
+                    saveProgress();
+                    currentState = GameState.DIFFICULTY_SELECT;
                 }
                 break;
 
@@ -2036,11 +2153,11 @@ public class GamePanel extends JPanel {
 
             case DIFFICULTY_SELECT:
                 if (EASY_BUTTON.contains(x, y)) {
-                    startGame(GameMode.LEVEL, Difficulty.EASY);
+                    openLevelStation(Difficulty.EASY);
                 } else if (MODERATE_BUTTON.contains(x, y)) {
-                    startGame(GameMode.LEVEL, Difficulty.MODERATE);
+                    openLevelStation(Difficulty.MODERATE);
                 } else if (HARD_BUTTON.contains(x, y)) {
-                    startGame(GameMode.LEVEL, Difficulty.HARD);
+                    openLevelStation(Difficulty.HARD);
                 } else if (SELECT_BACK_BUTTON.contains(x, y)) {
                     currentState = GameState.MODE_SELECT;
                 }
@@ -2117,9 +2234,13 @@ public class GamePanel extends JPanel {
                 } else if (MENU_RESET_BUTTON.contains(x, y) && hangarFromMenu) {
                     resetAdventureUpgrades();
                 } else if (HANGAR_TAB_ADVENTURE.contains(x, y) && hangarFromMenu) {
-                    setHangarMode(GameMode.ADVENTURE);
+                    switchHangarShip(GameMode.ADVENTURE, hangarDifficulty);
                 } else if (HANGAR_TAB_HARDCORE.contains(x, y) && hangarFromMenu) {
-                    setHangarMode(GameMode.HARDCORE);
+                    switchHangarShip(GameMode.HARDCORE, hangarDifficulty);
+                } else if (HANGAR_TAB_LEVEL.contains(x, y) && hangarFromMenu) {
+                    switchHangarShip(GameMode.LEVEL, hangarDifficulty);
+                } else if (hangarFromMenu && hangarMode == GameMode.LEVEL && levelShipTabAt(x, y) >= 0) {
+                    switchHangarShip(GameMode.LEVEL, Difficulty.values()[levelShipTabAt(x, y)]);
                 } else if (LAUNCH_BUTTON.contains(x, y)) {
                     sound.play(SoundManager.Sfx.CLICK);
                     finishUpgradeStation();
@@ -2206,6 +2327,10 @@ public class GamePanel extends JPanel {
                 } else {
                     list.add(HANGAR_TAB_ADVENTURE);
                     list.add(HANGAR_TAB_HARDCORE);
+                    list.add(HANGAR_TAB_LEVEL);
+                    if (hangarMode == GameMode.LEVEL) {
+                        list.addAll(java.util.Arrays.asList(LEVEL_SHIP_TABS));
+                    }
                     list.add(MENU_RESET_BUTTON);
                 }
                 list.add(LAUNCH_BUTTON);

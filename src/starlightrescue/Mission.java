@@ -84,8 +84,14 @@ public class Mission {
     /** The music an ADVENTURE mission plays (null = the first mission's music). */
     SoundManager.Track music = null;
 
-    /** Fixed ship {cannons, ammo, engines, hull}. Only LEVEL mode uses this. */
+    /**
+     * LEVEL mode only: the ship this difficulty starts with {cannons, ammo, engines, hull}.
+     * Each difficulty keeps its own ship and credits, upgraded from here (see GamePanel.levelProfiles).
+     */
     int[] preset = null;
+
+    /** LEVEL mode only: this difficulty's upgrade prices, compared to the usual ones (1.0). */
+    double priceScale = 1.0;
 
     // ADVENTURE twist: at this progress (0.0 - 1.0) the trap springs and sends a wave
     // of extra aliens. ambushWave = 0 means this mission has no trap.
@@ -163,6 +169,16 @@ public class Mission {
     Mission loadout(int cannons, int ammo, int engines, int hull) {
         preset = new int[]{cannons, ammo, engines, hull};
         return this;
+    }
+
+    Mission prices(double scale) {
+        this.priceScale = scale;
+        return this;
+    }
+
+    /** A new ship for this LEVEL difficulty: its starting loadout, at its own prices. */
+    Upgrades newLevelShip() {
+        return Upgrades.levelShip(preset, priceScale);
     }
 
     /** A surprise wave: at this progress, "wave" extra aliens pour in (ADVENTURE only). */
@@ -246,7 +262,9 @@ public class Mission {
 
     // ---------------------------------------------------------------
     // THE LEVELS  (LEVEL mode: index 0 = EASY, 1 = MODERATE, 2 = HARD)
-    // Each difficulty has its own number of aliens, speed, ship and bosses.
+    // Each difficulty has its own number of aliens, speed and bosses, and its own
+    // upgrade system: a ship and credits of its own, starting from its loadout, with
+    // its own prices (Easy is cheap, as it pays little; Hard costs more, as it pays most).
     // ---------------------------------------------------------------
     static final Mission[] LEVELS = {
 
@@ -257,7 +275,8 @@ public class Mission {
             .moves(2.0, 2.0, 2.0)
             .hazards(600, 0, 0.3)
             .speed(0.9, 0.25)
-            .loadout(2, 2, 1, 1),
+            .loadout(2, 2, 1, 1)
+            .prices(0.8),
 
         // MODERATE: more aliens, armed aliens join in, and ONE boss at the end.
         new Mission("MODERATE LEVEL", SpaceBackground.Scene.DEEP_SPACE,
@@ -268,6 +287,7 @@ public class Mission {
             .hazards(360, 0, 0.2)
             .speed(1.0, 0.35)
             .loadout(2, 2, 1, 1)
+            .prices(1.0)
             .boss(22, "ALIEN VANGUARD", 280, 0,
                   "WARNING", "A Vanguard guards this sector. Watch out for its charge!"),
 
@@ -280,6 +300,7 @@ public class Mission {
             .hazards(280, 800, 0.1)
             .speed(1.1, 0.45)
             .loadout(3, 3, 2, 1)
+            .prices(1.25)
             .boss(16, "ELITE DREADNOUGHT", 380, 3,
                   "WARNING", "An elite boss is blocking the sector!")
             .boss(32, "HIVE QUEEN", 650, 4,

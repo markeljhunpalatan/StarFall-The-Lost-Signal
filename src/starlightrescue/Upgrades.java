@@ -63,25 +63,55 @@ public class Upgrades {
     private static final int[] CLASS_AT = {0, 1, 3, 5, 7, 11, 17};      // purchases needed
 
     private final int[] level = START.clone();
+    private final int[] base = START.clone();     // the levels this ship came with: a Level ship starts better than brand new
+    private double priceScale = 1.0;              // a Level ship's own prices (see Mission.prices)
     private int credits = 0;
     private int xp = 0;                 // experience: earned by playing, it fills the level bar
     private int playerLevel = 1;        // goes up once the level bar is full AND the level's quest is done
     private MaxWeapon maxWeapon = MaxWeapon.OMEGA_CANNON;   // the player's pick, once CANNONS is fully upgraded
     private int questProgress = 0;      // how far through the current level's quest (see Quest)
 
-    /** A ready-made ship, used by LEVEL mode so every difficulty has a fixed loadout. */
-    public static Upgrades preset(int cannons, int ammo, int engines, int hull) {
+    /**
+     * A LEVEL ship: each difficulty has its own. It starts with the given levels
+     * (cannons, ammo, engines, hull) instead of a brand new ship, and every upgrade
+     * costs priceScale times the usual price. Those starting levels are free: they
+     * can't be sold, and a reset goes back to them.
+     */
+    public static Upgrades levelShip(int[] startLevels, double priceScale) {
 
         Upgrades u = new Upgrades();
-        u.level[CANNONS] = clamp(CANNONS, cannons);
-        u.level[AMMO] = clamp(AMMO, ammo);
-        u.level[ENGINES] = clamp(ENGINES, engines);
-        u.level[HULL] = clamp(HULL, hull);
+
+        for (int t = 0; t < TRACKS; t++) {
+            u.base[t] = clamp(t, startLevels[t]);
+            u.level[t] = u.base[t];
+        }
+
+        u.priceScale = priceScale;
         return u;
     }
 
     private static int clamp(int track, int value) {
         return Math.max(START[track], Math.min(MAX[track], value));
+    }
+
+    /** Keeps a level between what this ship came with and the top level. */
+    private int clampToBase(int track, int value) {
+        return Math.max(base[track], Math.min(MAX[track], value));
+    }
+
+    /** A price on this ship: the usual price times its price scale, rounded to 5 credits. */
+    private int scaled(int price) {
+        return (int) (Math.round(price * priceScale / 5.0) * 5);
+    }
+
+    /** How this ship's prices compare to the usual ones (1.0 = the usual). */
+    public double getPriceScale() {
+        return priceScale;
+    }
+
+    /** The level this ship came with on a track (a brand new ship's, except for Level ships). */
+    public int getBaseLevel(int track) {
+        return base[track];
     }
 
     // ---------- Levels and phases ----------
@@ -230,7 +260,7 @@ public class Upgrades {
     public void setCredits(int amount) { credits = Math.max(0, amount); }
 
     public int nextCost(int track) {
-        return isMaxed(track) ? 0 : COSTS[track][level[track] - START[track]];
+        return isMaxed(track) ? 0 : scaled(COSTS[track][level[track] - START[track]]);
     }
 
     public boolean canAfford(int track) {
@@ -380,9 +410,13 @@ public class Upgrades {
         }
     }
 
-    /** The player level the next step of a track needs (0 once the track is maxed). */
+    /**
+     * The player level the next step of a track needs (0 once the track is maxed).
+     * It counts from the levels the ship came with, so a Level ship's first upgrade on
+     * each track needs only level 1, like a brand new ship's.
+     */
     public int levelNeeded(int track) {
-        return isMaxed(track) ? 0 : LEVEL_NEEDED[track][level[track] - START[track]];
+        return isMaxed(track) ? 0 : LEVEL_NEEDED[track][level[track] - base[track]];
     }
 
     public boolean levelMet(int track) {
@@ -402,7 +436,7 @@ public class Upgrades {
     }
 
     public boolean canRefund(int track) {
-        return level[track] > START[track];
+        return level[track] > base[track];
     }
 
     /** Credits you get back for selling the top level of a track. */
@@ -412,7 +446,7 @@ public class Upgrades {
             return 0;
         }
 
-        int paid = COSTS[track][level[track] - START[track] - 1];
+        int paid = scaled(COSTS[track][level[track] - START[track] - 1]);
         return (int) Math.round(paid * REFUND_RATE);
     }
 
@@ -438,7 +472,7 @@ public class Upgrades {
     public void restoreLevels(int[] saved) {
 
         for (int t = 0; t < TRACKS; t++) {
-            level[t] = clamp(t, saved[t]);
+            level[t] = clampToBase(t, saved[t]);
         }
     }
 
@@ -461,6 +495,23 @@ public class Upgrades {
         }
     }
 
+    /** Removes the keys save() writes under this prefix. */
+    public static void forget(Properties data, String prefix) {
+
+        for (String key : new String[]{"wallet", "xp", "level", "quest", "maxweapon"}) {
+            data.remove(prefix + key);
+        }
+
+        for (int t = 0; t < TRACKS; t++) {
+            data.remove(prefix + "upgrade." + KEYS[t]);
+        }
+    }
+
+    /** True if the save data holds a profile under this prefix. */
+    public static boolean saved(Properties data, String prefix) {
+        return data.containsKey(prefix + "wallet");
+    }
+
     /** Reads the wallet and upgrade levels back (bad or missing values use the defaults). */
     public void load(Properties data, String prefix) {
 
@@ -474,7 +525,7 @@ public class Upgrades {
         maxWeapon = MaxWeapon.parse(data.getProperty(prefix + "maxweapon"));
 
         for (int t = 0; t < TRACKS; t++) {
-            level[t] = clamp(t, parse(data.getProperty(prefix + "upgrade." + KEYS[t]), START[t]));
+            level[t] = clampToBase(t, parse(data.getProperty(prefix + "upgrade." + KEYS[t]), base[t]));
         }
     }
 
@@ -496,8 +547,8 @@ public class Upgrades {
         int total = 0;
 
         for (int t = 0; t < TRACKS; t++) {
-            for (int lvl = START[t]; lvl < level[t]; lvl++) {
-                total += COSTS[t][lvl - START[t]];
+            for (int lvl = base[t]; lvl < level[t]; lvl++) {
+                total += scaled(COSTS[t][lvl - START[t]]);
             }
         }
 
@@ -513,7 +564,7 @@ public class Upgrades {
         credits += creditsSpent();
 
         for (int t = 0; t < TRACKS; t++) {
-            level[t] = START[t];
+            level[t] = base[t];
         }
     }
 
@@ -527,7 +578,7 @@ public class Upgrades {
         maxWeapon = MaxWeapon.OMEGA_CANNON;
 
         for (int t = 0; t < TRACKS; t++) {
-            level[t] = START[t];
+            level[t] = base[t];
         }
     }
 
