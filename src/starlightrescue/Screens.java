@@ -780,7 +780,7 @@ final class Screens {
 
     private void drawDifficultySelect(Graphics2D g) {
 
-        heading(g, "Choose a difficulty", "Each difficulty has its own ship and credits. Upgrade it, then launch.", 92);
+        heading(g, "Choose a difficulty", "Every level runs until your ship is destroyed, in rounds that get harder. Each has its own ship.", 92);
 
         Color[] accents = {UI.GREEN, UI.GOLD, UI.RED};
         Rectangle[] cards = {GamePanel.EASY_BUTTON, GamePanel.MODERATE_BUTTON, GamePanel.HARD_BUTTON};
@@ -811,11 +811,10 @@ final class Screens {
         Upgrades ship = game.levelProfiles.get(difficulty);
 
         String hazards = (m.meteorEvery > 0) ? "Rocks, meteors" : (m.asteroidEvery > 0 ? "Asteroids" : "None");
-        String bosses = m.bosses.isEmpty() ? "None" : String.valueOf(m.bosses.size());
 
         String[][] rows = {
-            {"Aliens", String.valueOf(m.target)},
-            {"Bosses", bosses},
+            {"Each round", m.target + " aliens"},
+            {"Bosses", roundBossText(m)},
             {"Hazards", hazards}
         };
 
@@ -874,22 +873,54 @@ final class Screens {
         g.setColor(UI.MUTED);
         g.drawString((GamePanel.START_LIVES + ship.getHullLevel()) + " lives  ·  " + ship.purchases() + "/" + Upgrades.totalSteps() + " upgrades", c.x + 96, sy + 73);
 
-        if (!m.bosses.isEmpty()) {
-            g.setFont(UI.plain(12f));
-            g.setColor(UI.alpha(accent, 230));
-            UI.center(g, bossList(m), cx, c.y + 280);
+        g.setFont(UI.plain(12f));
+        g.setColor(UI.alpha(accent, 230));
+        if (firstRoundBosses(m) == 0) {
+            UI.center(g, "A gentle start: round 1 has no boss", cx, c.y + 280);
         } else {
-            g.setFont(UI.plain(12f));
-            g.setColor(UI.alpha(accent, 230));
-            UI.center(g, "A gentle start: no boss", cx, c.y + 280);
+            UI.center(g, bossList(m), cx, c.y + 280);
         }
 
         g.setFont(UI.plain(12f));
         g.setColor(UI.MUTED);
-        g.drawString("Best score", c.x + 20, c.y + c.height - 16);
+        g.drawString("Best", c.x + 20, c.y + c.height - 16);
+        int bestRound = game.bestFor(bestKey + "_round");
         g.setFont(UI.bold(13f));
         g.setColor(UI.GOLD);
-        UI.right(g, fmt(game.bestFor(bestKey)), c.x + c.width - 20, c.y + c.height - 16);
+        String best = fmt(game.bestFor(bestKey));
+        UI.right(g, best, c.x + c.width - 20, c.y + c.height - 16);
+        if (bestRound > 0) {
+            int bw = UI.width(g, best);
+            g.setFont(UI.plain(12f));
+            g.setColor(UI.TEXT);
+            UI.right(g, "round " + bestRound + "  ·  ", c.x + c.width - 20 - bw, c.y + c.height - 16);
+        }
+    }
+
+    /** How many bosses a level's first round has. */
+    private static int firstRoundBosses(Mission m) {
+
+        int n = 0;
+
+        for (Mission.BossSpec spec : m.bosses) {
+            if (spec.fromRound == 0) {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
+    /** "2 each round", "1 each round", or "From round 2". */
+    private static String roundBossText(Mission m) {
+
+        int first = firstRoundBosses(m);
+
+        if (first > 0) {
+            return first + " each round";
+        }
+
+        return m.bosses.isEmpty() ? "None" : "From round " + (m.bosses.get(0).fromRound + 1);
     }
 
     /** How a ship's prices compare to the usual ones: "20% off", "usual prices", "25% pricier". */
@@ -1794,7 +1825,7 @@ final class Screens {
         } else if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
             launch = "BACK TO BATTLE";
         } else if (game.selectedMode == GamePanel.GameMode.LEVEL) {
-            launch = "LAUNCH LEVEL";
+            launch = game.levelStationMidRun ? "BACK TO BATTLE" : "LAUNCH LEVEL";
         } else {
             launch = "LAUNCH MISSION";
         }
@@ -1806,7 +1837,7 @@ final class Screens {
         int x = keyHint(g, 18, 542, "Buy", "1-4");
         keyHint(g, x + 8, 542, "Sell", "Shift", "1-4");
         x = keyHint(g, 18, 570, "Undo", "Z");
-        if (!fromMenu && game.selectedMode == GamePanel.GameMode.LEVEL) {
+        if (!fromMenu && game.selectedMode == GamePanel.GameMode.LEVEL && !game.levelStationMidRun) {
             keyHint(g, x + 8, 570, "Back", "Esc");
         } else if (!fromMenu) {
             keyHint(g, x + 8, 570, "Repair", "R");
@@ -1819,6 +1850,10 @@ final class Screens {
 
         if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
             return "Boss " + game.hardcoreBossesDefeated + " destroyed. Repair and upgrade.";
+        }
+
+        if (game.selectedMode == GamePanel.GameMode.LEVEL && game.levelStationMidRun) {
+            return "Round " + game.levelRound + " cleared. Round " + (game.levelRound + 1) + " is tougher.";
         }
 
         if (game.selectedMode == GamePanel.GameMode.LEVEL) {
@@ -2692,15 +2727,22 @@ final class Screens {
 
             if (game.selectedMode == GamePanel.GameMode.ADVENTURE && game.mission != null) {
                 label = "Mission " + game.missionNumber + ": " + capitalizeWords(game.missionName);
+            } else if (game.endlessLevel()) {
+                label = capitalizeWords(game.missionName) + "  ·  Round " + (game.levelRound + 1);
             } else {
                 label = capitalizeWords(game.missionName);
             }
 
-            fraction = game.progress();
+            fraction = game.endlessLevel() ? game.roundProgress() : game.progress();
             c1 = UI.BLUE;
             c2 = UI.CYAN;
 
-            if (game.mission != null && game.mission.objective == Mission.Objective.SURVIVE) {
+            if (game.endlessLevel()) {
+                int inRound = Math.max(0, game.enemiesDefeated - game.levelRound * game.missionTarget);
+                barText = (inRound >= game.missionTarget)
+                    ? "Destroy the boss to end the round"
+                    : inRound + " / " + game.missionTarget + " aliens this round";
+            } else if (game.mission != null && game.mission.objective == Mission.Objective.SURVIVE) {
                 int left = Math.max(0, game.mission.target - game.missionTicks / GamePanel.TICKS_PER_SECOND);
                 barText = left + "s to the wormhole";
             } else {
@@ -3186,17 +3228,7 @@ final class Screens {
             UI.badge(g, "NEW BEST SCORE", W / 2 - bw / 2, 390, UI.GOLD);
         }
 
-        String primary;
-
-        if (level) {
-            primary = (game.selectedDifficulty == GamePanel.Difficulty.HARD)
-                ? "FINISH"
-                : "NEXT: " + GamePanel.Difficulty.values()[game.selectedDifficulty.ordinal() + 1].name();
-        } else {
-            primary = "CONTINUE";
-        }
-
-        modalButtons(g, primary, UI.GREEN, "MAIN MENU");
+        modalButtons(g, "CONTINUE", UI.GREEN, "MAIN MENU");
     }
 
     private void drawGameOver(Graphics2D g) {
@@ -3208,9 +3240,15 @@ final class Screens {
             return;
         }
 
-        String subtitle = (game.selectedMode == GamePanel.GameMode.HARDCORE)
-            ? "Bosses destroyed: " + game.hardcoreBossesDefeated
-            : runName();
+        String subtitle;
+        if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
+            subtitle = "Bosses destroyed: " + game.hardcoreBossesDefeated;
+        } else if (game.endlessLevel()) {
+            int best = Math.max(game.levelRound + 1, game.bestFor(game.scoreKey() + "_round"));
+            subtitle = runName() + "  ·  reached round " + (game.levelRound + 1) + "  (best " + best + ")";
+        } else {
+            subtitle = runName();
+        }
 
         modalFrame(g, UI.RED, "Ship destroyed", subtitle);
 

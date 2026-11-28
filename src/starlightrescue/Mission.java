@@ -35,6 +35,7 @@ public class Mission {
         final String name;
         final int design;         // 0 - 5: which boss is drawn (see Boss)
         final Radio radio;        // optional radio message when it arrives
+        int fromRound = 0;        // LEVEL mode: the first round (0 = the first) it comes in
 
         BossSpec(int atKills, int health, String name, int design, Radio radio) {
             this.atKills = atKills;
@@ -171,6 +172,12 @@ public class Mission {
         return this;
     }
 
+    /** LEVEL mode: the boss added last only joins from this round on (0 = the first round). */
+    Mission fromRound(int round) {
+        bosses.get(bosses.size() - 1).fromRound = round;
+        return this;
+    }
+
     Mission prices(double scale) {
         this.priceScale = scale;
         return this;
@@ -262,13 +269,16 @@ public class Mission {
 
     // ---------------------------------------------------------------
     // THE LEVELS  (LEVEL mode: index 0 = EASY, 1 = MODERATE, 2 = HARD)
-    // Each difficulty has its own number of aliens, speed and bosses, and its own
-    // upgrade system: a ship and credits of its own, starting from its loadout, with
-    // its own prices (Easy is cheap, as it pays little; Hard costs more, as it pays most).
+    // A level runs until your ship is destroyed, in ROUNDS. A round is the level's
+    // aliens (target) and its bosses; each round after is faster and tougher, its
+    // bosses come back stronger, and the upgrade station opens in between.
+    // Each difficulty also has its own upgrade system: a ship and credits of its own,
+    // starting from its loadout, with its own prices (Easy is cheap, as it pays
+    // little; Hard costs more, as it pays most).
     // ---------------------------------------------------------------
     static final Mission[] LEVELS = {
 
-        // EASY: a short, gentle run. No boss.
+        // EASY: short, gentle rounds. The first has no boss; from round 2 a Vanguard ends each round.
         new Mission("EASY LEVEL", SpaceBackground.Scene.EARTH,
                     Objective.KILLS, 12, 110)
             .enemies(0.5, 2.0)
@@ -276,9 +286,12 @@ public class Mission {
             .hazards(600, 0, 0.3)
             .speed(0.9, 0.25)
             .loadout(2, 2, 1, 1)
-            .prices(0.8),
+            .prices(0.8)
+            .boss(12, "ALIEN VANGUARD", 200, 0,
+                  "WARNING", "A Vanguard has found you. The easy part is over!")
+            .fromRound(1),
 
-        // MODERATE: more aliens, armed aliens join in, and ONE boss at the end.
+        // MODERATE: more aliens, armed aliens join in, and ONE boss at the end of each round.
         new Mission("MODERATE LEVEL", SpaceBackground.Scene.DEEP_SPACE,
                     Objective.KILLS, 22, 68)
             .enemies(0.25, 0.6)
@@ -291,7 +304,7 @@ public class Mission {
             .boss(22, "ALIEN VANGUARD", 280, 0,
                   "WARNING", "A Vanguard guards this sector. Watch out for its charge!"),
 
-        // HARD: lots of aliens and TWO boss fights.
+        // HARD: lots of aliens and TWO boss fights every round.
         new Mission("HARD LEVEL", SpaceBackground.Scene.BLACK_HOLE,
                     Objective.KILLS, 32, 50)
             .enemies(0.0, 0.3)

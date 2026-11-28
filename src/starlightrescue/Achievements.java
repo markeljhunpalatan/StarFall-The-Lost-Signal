@@ -39,7 +39,7 @@ public final class Achievements {
         WINGMAN        ("Wingman",           "Hire an ally.",                                      UI.Icon.SHIP, Tier.BRONZE),
         CHAIN_REACTION ("Chain Reaction",    "One exploding alien takes out three others.",        UI.Icon.ROCK, Tier.SILVER),
         THROUGH_TRAP   ("Through the Trap",  "Win Deep-Space Pursuit after the ambush springs.",   UI.Icon.SHIELD, Tier.SILVER),
-        UNTOUCHABLE    ("Untouchable",       "Clear a mission without losing a life.",             UI.Icon.HEART, Tier.SILVER),
+        UNTOUCHABLE    ("Untouchable",       "Clear a mission or Level round without a life lost.", UI.Icon.HEART, Tier.SILVER),
         FULLY_LOADED   ("Fully Loaded",      "Max out every upgrade track on one ship.",           UI.Icon.ARMOR, Tier.GOLD),
         FULL_POWER     ("Full Power",        "Use a full-power ability.",                          UI.Icon.GEAR, Tier.SILVER),
         ENDURANCE      ("Endurance",         "Survive five minutes of Hardcore.",                  UI.Icon.PLANET, Tier.SILVER),
@@ -49,7 +49,7 @@ public final class Achievements {
         BOMB_SQUAD     ("Bomb Squad",        "Destroy ten exploding aliens in one run.",           UI.Icon.TARGET, Tier.SILVER),
         LIGHT_SHOW     ("Light Show",        "Destroy ten aliens with one laser orb.",             UI.Icon.BOLT, Tier.SILVER),
         LOYAL_WINGMAN  ("Loyal Wingman",     "Keep your ally alive for a full minute.",            UI.Icon.SHIP, Tier.BRONZE),
-        HARD_WON       ("Hard Won",          "Clear the Hard level.",                              UI.Icon.SKULL, Tier.GOLD),
+        HARD_WON       ("Hard Won",          "Clear round 1 of the Hard level.",                   UI.Icon.SKULL, Tier.GOLD),
         WARLORD        ("Warlord",           "Defeat three bosses in one Hardcore run.",           UI.Icon.SKULL, Tier.GOLD),
         MONEY_BAGS     ("Money Bags",        "Hold 3000 credits in your wallet at once.",          UI.Icon.COIN, Tier.BRONZE);
 

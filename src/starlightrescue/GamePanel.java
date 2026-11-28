@@ -384,7 +384,12 @@ public class GamePanel extends JPanel {
     int emptyClickTimer = 0;
     int bossHitSoundTimer = 0;
     int bossReward = 0;                 // credits for the boss on screen
-    int nextBossIndex = 0;              // which boss of the mission comes next
+    int nextBossIndex = 0;              // which boss of the mission (or of this Level round) comes next
+
+    // LEVEL mode runs until the ship is destroyed, in rounds: a round is the level's aliens and
+    // bosses, and each one after is faster and tougher (see completeLevelRound)
+    int levelRound = 0;                 // 0 = the first round
+    boolean levelStationMidRun = false; // the station between rounds (not the one before a run)
     int boostCooldown = 0;              // SHIFT boost recharge (ENGINES MK II)
 
     // Laser beam power-up: while laserTimer runs, holding SPACE fires the beam instead of bullets
@@ -477,6 +482,16 @@ public class GamePanel extends JPanel {
     static final double MAX_LEVEL_SPAWN_BOOST = 1.25;   // 25% more aliens, ambush aliens and asteroids
     static final double MAX_LEVEL_SPEED_BOOST = 1.15;   // 15% faster aliens and asteroids
     static final double MAX_LEVEL_BOSS_HEALTH = 1.3;    // 30% more hits to beat a boss
+
+    // Each LEVEL round after the first (r = rounds cleared):
+    static final double ROUND_SPEED = 0.10;         // aliens 10% faster per round ...
+    static final double ROUND_SPEED_MAX = 0.8;      // ... up to 80% faster
+    static final double ROUND_AGGRESSION = 0.10;    // they shoot more each round, up to +0.6
+    static final double ROUND_AGGRESSION_MAX = 0.6;
+    static final double ROUND_TOUGHNESS = 0.12;     // 12% more health per round, up to double
+    static final double ROUND_TOUGHNESS_MAX = 1.0;
+    static final double ROUND_SPAWN = 0.08;         // they come 8% sooner per round, down to half the gap
+    static final double ROUND_BOSS_HEALTH = 0.4;    // bosses come back with 40% more health per round
     boolean maxLevelRun = false;                        // this mission is at the top player level
     double bossPower = 0.5;                             // the ship's power when the current boss arrived
     SpawnRate spawnRate = SpawnRate.NORMAL;      // how many aliens, ambush aliens and asteroids spawn (Settings)
@@ -852,6 +867,92 @@ public class GamePanel extends JPanel {
         return name.charAt(0) + name.substring(1).toLowerCase();
     }
 
+    /** True during a LEVEL run, which goes on in rounds until the ship is destroyed. */
+    boolean endlessLevel() {
+        return selectedMode == GameMode.LEVEL && mission != null;
+    }
+
+    /** The kill count at which this LEVEL round ends. */
+    int roundEnd() {
+        return (levelRound + 1) * missionTarget;
+    }
+
+    /** How far through this LEVEL round (0.0 - 1.0). Anywhere else, the mission's progress. */
+    double roundProgress() {
+
+        if (!endlessLevel() || missionTarget <= 0) {
+            return progress();
+        }
+
+        double done = (enemiesDefeated - levelRound * missionTarget) / (double) missionTarget;
+        return Math.max(0.0, Math.min(1.0, done));
+    }
+
+    /** This LEVEL round's bosses, in order: the level's own, and any that join from later rounds. */
+    List<Mission.BossSpec> roundBosses() {
+
+        List<Mission.BossSpec> list = new ArrayList<>();
+
+        for (Mission.BossSpec spec : mission.bosses) {
+            if (spec.fromRound <= levelRound) {
+                list.add(spec);
+            }
+        }
+
+        return list;
+    }
+
+    /** 1.0 in the first LEVEL round, then perRound more each round, up to 1 + max. 1.0 outside LEVEL mode. */
+    double roundBoost(double perRound, double max) {
+        return endlessLevel() ? 1.0 + Math.min(max, perRound * levelRound) : 1.0;
+    }
+
+    /**
+     * A LEVEL round is cleared: a bonus, then the upgrade station with this difficulty's
+     * ship, then the next round, faster and tougher. The run only ends when the ship does.
+     */
+    void completeLevelRound(String summary) {
+
+        missionSummary = summary;
+        shooting = false;
+        enemyBullets.clear();
+
+        sound.play(SoundManager.Sfx.MISSION_COMPLETE);
+        gainXp(80);
+        score += 500 * (levelRound + 1);
+
+        if (!lifeLostThisMission) {
+            unlock(Achievement.UNTOUCHABLE);
+        }
+
+        if (selectedDifficulty == Difficulty.HARD && levelRound == 0) {
+            unlock(Achievement.HARD_WON);
+        }
+
+        // The next round: its bosses come again, the aliens come sooner, and a final wave waits at its end
+        levelRound++;
+        nextBossIndex = 0;
+        finalWaveSprung = false;
+        finalWaveLeft = 0;
+        lifeLostThisMission = false;
+        currentEnemySpawnInterval = Math.max(MIN_SPAWN_INTERVAL,
+            (int) Math.round(baseEnemySpawnInterval * Math.max(0.5, 1.0 - ROUND_SPAWN * levelRound)));
+        saveProgress();
+
+        levelStationMidRun = true;
+        openUpgradeStation(() -> {
+            levelStationMidRun = false;
+            refreshPlayerLoadout();
+            background.setScene(mission.scene);
+            damageCooldown = 90;
+            spawnCooldown = 90;
+            bannerTitle = "ROUND " + (levelRound + 1);
+            bannerSubtitle = "FASTER, TOUGHER, AND MORE OF THEM";
+            bannerTimer = BANNER_TIME;
+            currentState = GameState.PLAYING;
+        }, false);
+    }
+
     /**
      * LEVEL mode, before a run: the upgrade station opens with this difficulty's own
      * ship and credits. LAUNCH starts the level; ESC goes back to the difficulties.
@@ -860,6 +961,7 @@ public class GamePanel extends JPanel {
 
         selectedMode = GameMode.LEVEL;
         selectedDifficulty = difficulty;
+        levelStationMidRun = false;
         setHangarShip(GameMode.LEVEL, difficulty);
         parts.reset();              // a Level run always starts with every part at 100%
         sound.play(SoundManager.Sfx.CLICK);
@@ -949,6 +1051,7 @@ public class GamePanel extends JPanel {
         missionTicks = 0;
         missionSummary = "";
         nextBossIndex = 0;
+        levelRound = 0;
         nextRadio = 0;
 
         zigzagAt = m.zigzagAt;
@@ -1034,6 +1137,11 @@ public class GamePanel extends JPanel {
 
     String describeGoal(Mission m) {
 
+        // A LEVEL run is endless: it goes on in rounds until the ship is destroyed
+        if (m.preset != null) {
+            return "ENDLESS: SURVIVE AS LONG AS YOU CAN";
+        }
+
         String text = "DESTROY " + m.target + " ALIENS";
 
         if (m.bosses.size() == 1) {
@@ -1095,11 +1203,6 @@ public class GamePanel extends JPanel {
                     showVictory();
                 }
             });
-
-        } else if (selectedMode == GameMode.LEVEL && selectedDifficulty != Difficulty.HARD) {
-
-            // Easy -> Moderate -> Hard: the next difficulty's station opens, with its own ship
-            openLevelStation(Difficulty.values()[selectedDifficulty.ordinal() + 1]);
 
         } else {
 
@@ -1505,6 +1608,11 @@ public class GamePanel extends JPanel {
         if (score > bestFor(scoreKey())) {
             saveData.setProperty(scoreKey(), String.valueOf(score));
             newHighScore = true;
+        }
+
+        // LEVEL runs are endless: the furthest round reached is kept too
+        if (endlessLevel() && levelRound + 1 > bestFor(scoreKey() + "_round")) {
+            saveData.setProperty(scoreKey() + "_round", String.valueOf(levelRound + 1));
         }
 
         saveProgress();
@@ -1992,7 +2100,7 @@ public class GamePanel extends JPanel {
             case UPGRADE:
                 if (hangarFromMenu) {
                     finishUpgradeStation();
-                } else if (selectedMode == GameMode.LEVEL) {
+                } else if (selectedMode == GameMode.LEVEL && !levelStationMidRun) {
                     // The station before a Level run: back to the difficulties (nothing is lost)
                     upgradeOnFinish = null;
                     undoStack.clear();
@@ -3645,7 +3753,7 @@ public class GamePanel extends JPanel {
             // Speeds up over time, and a little more after every boss
             speed = 1.0 + Math.min(1.6, hardcoreTicks / 14400.0 + 0.06 * hardcoreBossesDefeated);
         } else {
-            speed = baseSpeed * (1.0 + speedRamp * progress());
+            speed = baseSpeed * (1.0 + speedRamp * progress()) * roundBoost(ROUND_SPEED, ROUND_SPEED_MAX);
         }
 
         return maxLevelRun ? speed * MAX_LEVEL_SPEED_BOOST : speed;
@@ -3734,7 +3842,8 @@ public class GamePanel extends JPanel {
         } else {
             double base = (mission != null) ? mission.aggression : 1.0;
             double minutes = missionTicks / (double) (60 * TICKS_PER_SECOND);
-            aggression = base + 0.3 * progress() + Math.min(0.3, 0.1 * minutes);
+            aggression = base + 0.3 * progress() + Math.min(0.3, 0.1 * minutes)
+                       + (roundBoost(ROUND_AGGRESSION, ROUND_AGGRESSION_MAX) - 1.0);
         }
 
         return maxLevelRun ? aggression * 1.15 : aggression;
@@ -3747,7 +3856,7 @@ public class GamePanel extends JPanel {
             return 1.0 + Math.min(1.0, 0.15 * hardcoreBossesDefeated);
         }
 
-        return (mission != null) ? mission.toughness : 1.0;
+        return ((mission != null) ? mission.toughness : 1.0) * roundBoost(ROUND_TOUGHNESS, ROUND_TOUGHNESS_MAX);
     }
 
     // ---------- The final wave ----------
@@ -3764,7 +3873,7 @@ public class GamePanel extends JPanel {
 
         boolean bossQuiet = (boss == null && bossDeathTimer == 0);
 
-        if (!finalWaveSprung && progress() >= FINAL_WAVE_AT && bossQuiet) {
+        if (!finalWaveSprung && roundProgress() >= FINAL_WAVE_AT && bossQuiet) {
 
             finalWaveSprung = true;
             finalWaveLeft = scaledAmount(FINAL_WAVE_SIZE + (int) Math.round(4 * (mission.aggression - 1.0)));
@@ -4391,7 +4500,30 @@ public class GamePanel extends JPanel {
             return new Mission.BossSpec(0, 300 + 180 * n + 30 * n * n, name, design, null);
         }
 
-        // ADVENTURE and LEVEL: the mission lists its bosses and when they appear
+        // LEVEL: the level's bosses come back every round, stronger each time (MK-2, MK-3, ...)
+        if (endlessLevel()) {
+
+            List<Mission.BossSpec> list = roundBosses();
+
+            if (nextBossIndex >= list.size()) {
+                return null;
+            }
+
+            Mission.BossSpec spec = list.get(nextBossIndex);
+
+            if (enemiesDefeated < levelRound * missionTarget + spec.atKills) {
+                return null;
+            }
+
+            if (levelRound == 0) {
+                return spec;
+            }
+
+            int health = (int) Math.round(spec.health * (1.0 + ROUND_BOSS_HEALTH * levelRound));
+            return new Mission.BossSpec(spec.atKills, health, spec.name + " MK-" + (levelRound + 1), spec.design, spec.radio);
+        }
+
+        // ADVENTURE: the mission lists its bosses and when they appear
         if (mission != null && nextBossIndex < mission.bosses.size()) {
 
             Mission.BossSpec spec = mission.bosses.get(nextBossIndex);
@@ -4652,7 +4784,7 @@ public class GamePanel extends JPanel {
         if (selectedMode == GameMode.HARDCORE) {
             tier = hardcoreBossesDefeated;
         } else if (selectedMode == GameMode.LEVEL) {
-            tier = nextBossIndex;
+            tier = nextBossIndex + levelRound;      // later rounds bring the stronger versions
         } else {
             tier = 0;
         }
@@ -4803,6 +4935,17 @@ public class GamePanel extends JPanel {
                 currentState = GameState.PLAYING;
             }, false);
 
+        } else if (endlessLevel()) {
+
+            score += 1000;
+            nextBossIndex++;
+            spawnCooldown = 60;
+
+            // The round ends with its LAST boss (the run goes on)
+            if (nextBossIndex >= roundBosses().size() && enemiesDefeated >= roundEnd()) {
+                completeLevelRound(defeatedName + " DESTROYED!");
+            }
+
         } else if (mission != null) {
 
             score += 1000;
@@ -4853,6 +4996,16 @@ public class GamePanel extends JPanel {
             return;
         }
 
+        // LEVEL: never over while the ship flies. A round without a boss left ends on its last alien.
+        if (endlessLevel()) {
+
+            if (nextBossIndex >= roundBosses().size() && enemiesDefeated >= roundEnd()) {
+                completeLevelRound("ROUND " + (levelRound + 1) + " CLEARED!");
+            }
+
+            return;
+        }
+
         // Survive-for-N-seconds missions (one with a boss ends when the boss is destroyed, in updateBossDeath)
         if (mission.objective == Mission.Objective.SURVIVE) {
 
@@ -4886,14 +5039,6 @@ public class GamePanel extends JPanel {
 
         if (selectedMode == GameMode.ADVENTURE && missionIndex == 1 && ambushSprung) {
             unlock(Achievement.THROUGH_TRAP);
-        }
-
-        if (selectedMode == GameMode.LEVEL && selectedDifficulty == Difficulty.HARD) {
-            unlock(Achievement.HARD_WON);
-        }
-
-        if (selectedMode == GameMode.LEVEL) {
-            recordScore();
         }
 
         currentState = GameState.MISSION_COMPLETE;
