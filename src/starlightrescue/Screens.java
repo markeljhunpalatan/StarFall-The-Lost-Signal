@@ -51,6 +51,7 @@ final class Screens {
 
         switch (game.currentState) {
             case OPENING:           drawOpening(g); break;
+            case LAUNCH:            drawLaunch(g); break;
             case MENU:              drawMainMenu(g); break;
             case MODE_SELECT:       drawModeSelect(g); break;
             case DIFFICULTY_SELECT: drawDifficultySelect(g); break;
@@ -66,6 +67,7 @@ final class Screens {
             case WARP:              WormholeWarp.draw(g, game.warpTick, game.previewPlayer, game.background); break;
             case ACHIEVEMENTS:      drawAchievements(g); break;
             case PROGRESS:          drawProgress(g); break;
+            case TITLE_CARD:        drawTitleCard(g); break;
             default:                break;
         }
 
@@ -229,6 +231,7 @@ final class Screens {
 
         switch (game.currentState) {
             case OPENING:
+            case LAUNCH:
             case MENU:
             case MODE_SELECT:
             case DIFFICULTY_SELECT:
@@ -273,7 +276,7 @@ final class Screens {
             game.background.draw(g, still ? 0.0 : game.progress());
 
             if (game.currentState == GamePanel.GameState.MENU) {
-                game.background.drawEarth(g, 690, 660, 270);
+                LobbyBackdrop.draw(g, game.frame);          // the lobby's own background
             }
         }
 
@@ -294,17 +297,6 @@ final class Screens {
     private void drawMainMenu(Graphics2D g) {
 
         int t = game.frame;
-
-        // The lost signal: slow rings pulsing out from Earth
-        g.setStroke(new BasicStroke(1.6f));
-
-        for (int i = 0; i < 3; i++) {
-            double phase = ((t + i * 90) % 270) / 270.0;
-            int r = (int) (280 + phase * 560);
-            g.setColor(UI.alpha(UI.CYAN, (int) (60 * (1 - phase))));
-            g.drawOval(690 - r, 660 - r, r * 2, r * 2);
-        }
-        g.setStroke(new BasicStroke(1f));
 
         drawTitle(g, 72, 48f);
 
@@ -388,13 +380,15 @@ final class Screens {
         g.setStroke(new BasicStroke(1f));
 
         game.previewPlayer.setLoadout(ship);
-        int shipY = 268 + (int) Math.round(Math.sin(t * 0.045) * 5);
-        Graphics2D sg = (Graphics2D) g.create();
-        sg.translate(cx, shipY);
-        sg.scale(2.0, 2.0);
-        game.previewPlayer.placeAt(-30, -20);
-        game.previewPlayer.draw(sg);
-        sg.dispose();
+        if (!hideLobbyShip) {
+            int shipY = 268 + (int) Math.round(Math.sin(t * 0.045) * 5);
+            Graphics2D sg = (Graphics2D) g.create();
+            sg.translate(cx, shipY);
+            sg.scale(2.0, 2.0);
+            game.previewPlayer.placeAt(-30, -20);
+            game.previewPlayer.draw(sg);
+            sg.dispose();
+        }
 
         // Class and upgrades
         g.setFont(UI.bold(17f));
@@ -676,55 +670,566 @@ final class Screens {
     // OPENING SCREEN
     // ===============================================================
 
-    /** Four aliens, one from each rank, drift past the title (drone, fighter, elite). */
-    private static final Enemy.Type[] OPENING_ALIENS = {
-        Enemy.Type.SCOUT, Enemy.Type.GUNNER, Enemy.Type.ZIGZAG, Enemy.Type.DASHER
-    };
-
     private Player openingShip;
+    private java.awt.Shape[] titleLetters;          // the title's letters, built once
+    private java.awt.geom.Area titleShape;          // all of them together, for the light that sweeps across
+    private int titleBaseline;
 
     /**
-     * The first screen: the title fades in, your own ship flies across the sky, and
-     * aliens drift past. Press Enter, Space or click to go on.
+     * The intro: a cinematic sunrise over Earth. The screen fades up from black, the
+     * letters of the title fall gently into place in gold, a light sweeps across them,
+     * the subtitle and a fine gold ornament appear, stars fall across the sky and your
+     * ship glides past. Press Enter, Space or click to go on.
      */
     private void drawOpening(Graphics2D g) {
 
         int t = game.frame;
 
+        drawIntroSky(g, t);
+        drawIntroHorizon(g, t);
+        drawIntroShip(g, t);
+        drawIntroTitle(g, t);
+
+        // The prompt, once the title has arrived
+        double ready = clamp01((t - 185) / 40.0);
+        if (ready > 0) {
+            double pulse = 0.55 + 0.45 * Math.sin(t * 0.07);
+            int a = (int) (255 * ready * pulse);
+            g.setFont(UI.bold(13f));
+            g.setColor(new Color(255, 240, 205, a));
+            UI.tracked(g, "PRESS ENTER TO BEGIN", W / 2, 514, 4f);
+            int half = UI.trackedWidth(g, "PRESS ENTER TO BEGIN", 4f) / 2;
+            introDiamond(g, W / 2 - half - 22, 509, 4, new Color(240, 200, 110, a));
+            introDiamond(g, W / 2 + half + 22, 509, 4, new Color(240, 200, 110, a));
+            g.setFont(UI.plain(11f));
+            g.setColor(new Color(200, 210, 235, (int) (150 * ready)));
+            UI.center(g, "or press Space, or click anywhere", W / 2, 536);
+        }
+
+        // It all fades up from black
+        if (t < 50) {
+            g.setColor(new Color(0, 0, 0, (int) (255 * (1 - t / 50.0))));
+            g.fillRect(0, 0, W, H);
+        }
+    }
+
+    // ---------- The launch: from the title screen to the lobby ----------
+
+    private boolean hideLobbyShip = false;     // while the launch flies the ship onto its stand
+    private BufferedImage lobbyLayer;          // the lobby drawn on its own, so its parts can slide in
+
+    /**
+     * From the title screen to the lobby. Your ship swoops in and charges, then rockets
+     * into hyperspace: the stars stretch into streaks, Earth falls away and the screen
+     * flashes. Out of the flash comes the lobby's galaxy, the streaks slow, the lobby
+     * slides together around you, and your ship flies in and lands on its stand.
+     */
+    private void drawLaunch(Graphics2D g) {
+
+        int t = game.launchTimer;
+        int f = game.frame;
+
+        if (t < GamePanel.LAUNCH_FLASH) {
+            drawLaunchDeparture(g, t, f);
+        } else {
+            drawLaunchArrival(g, t, f);
+        }
+
+        // The flash: it builds just before the jump peaks, then clears to show the galaxy
+        double flash;
+        if (t < GamePanel.LAUNCH_FLASH) {
+            flash = clamp01((t - (GamePanel.LAUNCH_FLASH - 8)) / 8.0);
+        } else {
+            flash = 1.0 - clamp01((t - GamePanel.LAUNCH_FLASH) / 22.0);
+        }
+        if (flash > 0) {
+            g.setColor(new Color(225, 245, 255, (int) (255 * flash)));
+            g.fillRect(0, 0, W, H);
+        }
+    }
+
+    /** The title screen falling away as the ship charges and jumps. */
+    private void drawLaunchDeparture(Graphics2D g, int t, int f) {
+
+        int jump = GamePanel.LAUNCH_JUMP;
+        double drop = ease(clamp01((t - jump) / 40.0));
+        double warp = clamp01((t - jump + 6) / 26.0);
+
+        // A little shake as the engines fire
+        Graphics2D v = (Graphics2D) g.create();
+        if (t >= jump) {
+            double shake = 3.0 * (1 - clamp01((t - jump) / 40.0)) + 1.0;
+            v.translate(Math.sin(t * 2.3) * shake, Math.cos(t * 1.9) * shake);
+        }
+
+        drawIntroSky(v, f);
+
+        // Earth and the sunrise fall away below
+        Graphics2D hz = (Graphics2D) v.create();
+        hz.translate(0, drop * 320);
+        drawIntroHorizon(hz, f);
+        hz.dispose();
+
+        // The title lifts away and fades
+        double gone = ease(clamp01(t / 26.0));
+        if (gone < 1) {
+            Graphics2D tg = (Graphics2D) v.create();
+            tg.translate(0, -50 * gone);
+            tg.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (1 - gone)));
+            drawIntroTitle(tg, Math.max(f, 400));
+            tg.dispose();
+        }
+
+        // Hyperspace: the stars stretch into streaks
+        if (warp > 0) {
+            drawWarpStreaks(v, t, warp, 1.0);
+        }
+
+        // The ship: it swoops in and charges, then rockets away to the right
+        double[] start = introShipCenter(game.launchFrame);
+        double sx;
+        double sy;
+        double scale;
+        double stretch = 1.0;
+        if (t < jump) {
+            double p = ease(t / (double) jump);
+            sx = start[0] + (230 - start[0]) * p;
+            sy = start[1] + (330 - start[1]) * p - 30 * Math.sin(Math.PI * p);
+            scale = 1.0 + 0.35 * p;
+        } else {
+            double p = clamp01((t - jump) / (double) (GamePanel.LAUNCH_FLASH - 10 - jump));
+            sx = 230 + Math.pow(p, 2.2) * 900;
+            sy = 330 - 20 * p;
+            scale = 1.35 + 0.3 * p;
+            stretch = 1.0 + 1.6 * p;
+        }
+
+        // The charge: rings gathering round the ship before the jump
+        if (t > 12 && t < jump + 4) {
+            double c = clamp01((t - 12) / (double) (jump - 12));
+            for (int k = 0; k < 2; k++) {
+                double ring = ((c * 2 + k * 0.5) % 1.0);
+                int rr = (int) (90 - 70 * ring);
+                v.setStroke(new BasicStroke(2f));
+                v.setColor(UI.alpha(UI.CYAN, (int) (200 * ring)));
+                v.drawOval((int) sx - rr, (int) sy - rr, rr * 2, rr * 2);
+            }
+            v.setStroke(new BasicStroke(1f));
+        }
+
+        // The trail of light behind it
+        double trail = (t < jump) ? 60 + 60 * (t / (double) jump) : 120 + (sx - 230) * 0.9;
+        v.setStroke(new BasicStroke((float) (4 * scale), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        v.setPaint(new GradientPaint((float) sx - 20, (float) sy, new Color(190, 235, 255, 230),
+                                     (float) (sx - 20 - trail), (float) sy, new Color(120, 200, 255, 0)));
+        v.drawLine((int) sx - 20, (int) sy, (int) (sx - 20 - trail), (int) sy);
+        v.setStroke(new BasicStroke(1f));
+
+        // The engine's glow, brighter as it charges
+        double glow = (t < jump) ? t / (double) jump : 1.0;
+        v.setPaint(new RadialGradientPaint(new Point2D.Float((float) (sx - 24 * scale), (float) sy), (float) (26 * scale),
+            new float[]{0f, 1f}, new Color[]{new Color(180, 230, 255, (int) (220 * glow)), new Color(80, 160, 255, 0)}));
+        v.fillOval((int) (sx - 50 * scale), (int) (sy - 26 * scale), (int) (52 * scale), (int) (52 * scale));
+
+        if (sx < W + 140) {
+            drawShipAt(v, sx, sy, scale * stretch, scale);
+        }
+        v.dispose();
+    }
+
+    /** Out of the flash: the galaxy, the streaks slowing, the lobby sliding together, and the ship landing. */
+    private void drawLaunchArrival(Graphics2D g, int t, int f) {
+
+        // The galaxy forms out of the flash: complete by the time the ship lands
+        double form = clamp01((t - (GamePanel.LAUNCH_FLASH - 4)) / (double) (GamePanel.LAUNCH_LAND - GamePanel.LAUNCH_FLASH + 4));
+        LobbyBackdrop.draw(g, f, form);
+        UI.vignette(g, W, H);
+
+        // The streaks slow down and fade
+        double slow = 1.0 - clamp01((t - GamePanel.LAUNCH_FLASH) / 40.0);
+        if (slow > 0) {
+            drawWarpStreaks(g, t, slow, slow);
+        }
+
+        // The lobby, drawn on its own layer, its parts sliding in from the edges
+        int assemble = GamePanel.LAUNCH_ASSEMBLE;
+        if (t >= assemble - 12) {
+
+            if (lobbyLayer == null) {
+                lobbyLayer = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB);
+            }
+            Graphics2D lg = lobbyLayer.createGraphics();
+            lg.setComposite(AlphaComposite.Clear);
+            lg.fillRect(0, 0, W, H);
+            lg.setComposite(AlphaComposite.SrcOver);
+            lg.setRenderingHints(g.getRenderingHints());
+            hideLobbyShip = t < GamePanel.LAUNCH_LAND;
+            drawMainMenu(lg);
+            hideLobbyShip = false;
+            lg.dispose();
+
+            double top = ease(clamp01((t - (assemble - 12)) / 34.0));
+            double left = ease(clamp01((t - (assemble - 8)) / 34.0));
+            double right = ease(clamp01((t - (assemble - 2)) / 36.0));
+            double bottom = ease(clamp01((t - (assemble + 6)) / 30.0));
+
+            slide(g, 0, 0, W, 128, 0, (int) (-80 * (1 - top)), top);
+            slide(g, 0, 128, 316, 408, (int) (-340 * (1 - left)), 0, left);
+            slide(g, 316, 128, W - 316, 408, (int) (500 * (1 - right)), 0, right);
+            slide(g, 0, 536, W, H - 536, 0, (int) (70 * (1 - bottom)), bottom);
+
+            // The ship flies in from the left and lands on its stand
+            int land = GamePanel.LAUNCH_LAND;
+            if (t < land) {
+                double p = ease(clamp01((t - assemble) / (double) (land - assemble)));
+                double cardShift = -340 * (1 - left);
+                double targetY = 268 + Math.round(Math.sin(f * 0.045) * 5);
+                double sx = -140 + (164 + cardShift + 140) * p;
+                double sy = 300 + (targetY - 300) * p;
+                double scale = 3.4 - 1.4 * p;
+                if (t >= assemble) {
+                    double speed = 1 - p;
+                    g.setStroke(new BasicStroke((float) (5 * scale), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.setPaint(new GradientPaint((float) sx - 30, (float) sy, new Color(190, 235, 255, (int) (200 * speed)),
+                                                 (float) (sx - 30 - 220 * speed), (float) sy, new Color(120, 200, 255, 0)));
+                    g.drawLine((int) sx - 30, (int) sy, (int) (sx - 30 - 220 * speed), (int) sy);
+                    g.setStroke(new BasicStroke(1f));
+                    drawShipAt(g, sx, sy, scale, scale);
+                }
+            } else {
+                // Touchdown: a pulse of light from the stand
+                double pulse = clamp01((t - land) / 20.0);
+                int rw = (int) (164 + 120 * pulse);
+                int rh = (int) (28 + 24 * pulse);
+                g.setStroke(new BasicStroke(2.5f));
+                g.setColor(UI.alpha(UI.CYAN, (int) (230 * (1 - pulse))));
+                g.drawOval(164 - rw / 2, 334 - rh / 2, rw, rh);
+                g.setStroke(new BasicStroke(1f));
+            }
+        }
+    }
+
+    /** Draws one part of the lobby layer, moved by (dx, dy) and faded in by alpha. */
+    private void slide(Graphics2D g, int x, int y, int w, int h, int dx, int dy, double alpha) {
+
+        if (alpha <= 0) {
+            return;
+        }
+        Graphics2D sg = (Graphics2D) g.create();
+        sg.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) alpha));
+        sg.translate(dx, dy);
+        sg.clipRect(x, y, w, h);
+        sg.drawImage(lobbyLayer, 0, 0, null);
+        sg.dispose();
+    }
+
+    /** Hyperspace streaks rushing out from just right of the middle. strength fades them, speed shortens them. */
+    private void drawWarpStreaks(Graphics2D g, int t, double strength, double speed) {
+
+        int vx = 470;
+        int vy = 310;
+        java.util.Random r = new java.util.Random(31);
+        g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+
+        for (int i = 0; i < 150; i++) {
+            double angle = r.nextDouble() * Math.PI * 2;
+            double offset = r.nextDouble();
+            double rate = 0.012 + r.nextDouble() * 0.02;
+            double d = (offset + t * rate) % 1.0;
+            double dist = 30 + d * d * 620;
+            double len = (20 + 260 * d) * strength * speed;
+            double cx = Math.cos(angle);
+            double cy = Math.sin(angle);
+            int a = (int) (230 * strength * Math.min(1.0, d * 2.5));
+            Color tint = (i % 4 == 0) ? new Color(170, 210, 255, a) : new Color(235, 245, 255, a);
+            g.setColor(tint);
+            g.drawLine((int) (vx + cx * dist), (int) (vy + cy * dist), (int) (vx + cx * (dist - len)), (int) (vy + cy * (dist - len)));
+        }
+        g.setStroke(new BasicStroke(1f));
+    }
+
+    /** Where the ship was gliding on the title screen at this frame (its middle). */
+    private double[] introShipCenter(int frame) {
+
+        double run = W + 320;
+        double sx = ((frame * 1.5) % run) - 160;
+        double sy = 352 + Math.sin(frame * 0.03) * 10;
+
+        if (sx < -40 || sx > W + 10) {
+            return new double[]{-40, 372};          // off screen: it comes in from the left
+        }
+        return new double[]{sx + 30, sy + 20};
+    }
+
+    /** Your ship, centred on (cx, cy), scaled (wider than tall when it streaks away). */
+    private void drawShipAt(Graphics2D g, double cx, double cy, double scaleX, double scaleY) {
+
+        game.previewPlayer.setLoadout(game.hangar);
+        Graphics2D sg = (Graphics2D) g.create();
+        sg.translate(cx, cy);
+        sg.scale(scaleX, scaleY);
+        game.previewPlayer.placeAt(-30, -20);
+        game.previewPlayer.draw(sg);
+        sg.dispose();
+    }
+
+    private static double clamp01(double v) {
+        return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    /** A small gold diamond, the ornament used around the title and the prompt. */
+    private static void introDiamond(Graphics2D g, int cx, int cy, int r, Color c) {
+        g.setColor(c);
+        g.fillPolygon(new int[]{cx, cx + r, cx, cx - r}, new int[]{cy - r, cy, cy + r, cy}, 4);
+    }
+
+    /** Soft coloured nebulae that breathe slowly, and stars falling across the sky. */
+    private void drawIntroSky(Graphics2D g, int t) {
+
+        double breathe = 0.5 + 0.5 * Math.sin(t * 0.012);
+        introGlow(g, 210 + (int) (20 * Math.sin(t * 0.004)), 170, 300, new Color(120, 70, 200), (int) (34 + 16 * breathe));
+        introGlow(g, 610, 150 + (int) (14 * Math.cos(t * 0.005)), 280, new Color(40, 150, 200), (int) (26 + 14 * (1 - breathe)));
+        introGlow(g, 400, 250, 360, new Color(200, 150, 70), 18);
+
+        // Falling stars: three lanes, each streaking across now and then
+        for (int lane = 0; lane < 3; lane++) {
+
+            int cycle = 170 + lane * 37;
+            int k = (t + lane * 61) / cycle;
+            double phase = ((t + lane * 61) % cycle) / 46.0;     // the streak lasts 46 frames
+
+            if (phase > 1.0) {
+                continue;
+            }
+
+            long seed = k * 7919L + lane * 104729L;
+            double x0 = 260 + Math.floorMod(seed * 31, 560);
+            double y0 = -10 + Math.floorMod(seed * 17, 170);
+            double dx = -1.0;
+            double dy = 0.52;
+            double travel = phase * 420;
+            double hx = x0 + dx * travel;
+            double hy = y0 + dy * travel;
+            double tail = 120 * Math.min(1.0, phase * 3);
+            int fade = (int) (230 * Math.sin(Math.PI * phase));
+
+            g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setPaint(new GradientPaint((float) hx, (float) hy, new Color(255, 245, 215, fade),
+                                         (float) (hx - dx * tail), (float) (hy - dy * tail), new Color(255, 210, 140, 0)));
+            g.drawLine((int) hx, (int) hy, (int) (hx - dx * tail), (int) (hy - dy * tail));
+            g.setColor(new Color(255, 250, 230, fade));
+            g.fillOval((int) hx - 2, (int) hy - 2, 5, 5);
+            g.setColor(new Color(255, 230, 170, fade / 4));
+            g.fillOval((int) hx - 6, (int) hy - 6, 13, 13);
+        }
+        g.setStroke(new BasicStroke(1f));
+    }
+
+    /** A soft round glow of colour. */
+    private static void introGlow(Graphics2D g, int cx, int cy, int r, Color c, int alpha) {
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(cx, cy), r, new float[]{0f, 1f},
+            new Color[]{UI.alpha(c, Math.max(0, Math.min(255, alpha))), UI.alpha(c, 0)}));
+        g.fillOval(cx - r, cy - r, r * 2, r * 2);
+    }
+
+    /** The edge of the Earth across the bottom, at night, with the sun rising behind it. */
+    private void drawIntroHorizon(Graphics2D g, int t) {
+
+        int cx = W / 2;
+        int r = 860;
+        int cy = 404 + r;                                       // the top of the planet sits at y = 404
+        double pulse = 0.85 + 0.15 * Math.sin(t * 0.03);
+
+        // The sunrise behind the planet's edge
+        introGlow(g, cx, 404, 330, new Color(255, 170, 70), (int) (120 * pulse));
+        introGlow(g, cx, 404, 120, new Color(255, 225, 160), (int) (170 * pulse));
+
+        // The atmosphere: a thin blue haze just outside the planet
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(cx, cy), r + 46,
+            new float[]{0f, (float) r / (r + 46) - 0.004f, (float) r / (r + 46) + 0.012f, 1f},
+            new Color[]{new Color(0, 0, 0, 0), new Color(0, 0, 0, 0), new Color(110, 190, 255, 95), new Color(110, 190, 255, 0)}));
+        g.fillOval(cx - r - 46, cy - r - 46, (r + 46) * 2, (r + 46) * 2);
+
+        // The night side of the planet
+        g.setPaint(new GradientPaint(0, 404, new Color(16, 26, 54), 0, 600, new Color(4, 6, 16)));
+        g.fillOval(cx - r, cy - r, r * 2, r * 2);
+
+        // City lights scattered on the night side
+        for (int i = 0; i < 70; i++) {
+            long s = i * 2654435761L;
+            double ax = -0.55 + Math.floorMod(s, 1000) / 1000.0 * 1.1;     // angle across the top of the planet
+            double depth = 14 + Math.floorMod(s >> 7, 160);
+            int lx = (int) (cx + Math.sin(ax) * (r - depth));
+            int ly = (int) (cy - Math.cos(ax) * (r - depth));
+            if (ly < 600) {
+                int twinkle = (int) (90 + 60 * Math.sin(t * 0.05 + i));
+                g.setColor(new Color(255, 205, 130, twinkle));
+                g.fillRect(lx, ly, 2, 2);
+            }
+        }
+
+        // The sunlit rim: gold in the middle, blue towards the sides
+        g.setStroke(new BasicStroke(2.6f));
+        g.setPaint(new java.awt.LinearGradientPaint(cx - 420, 0, cx + 420, 0,
+            new float[]{0f, 0.3f, 0.5f, 0.7f, 1f},
+            new Color[]{new Color(110, 190, 255, 0), new Color(130, 200, 255, 170), new Color(255, 236, 190, 255),
+                        new Color(130, 200, 255, 170), new Color(110, 190, 255, 0)}));
+        g.drawOval(cx - r, cy - r, r * 2, r * 2);
+        g.setStroke(new BasicStroke(1f));
+
+        // The sun's first light: a bright point on the edge, and a long thin flare across the screen
+        g.setPaint(new java.awt.LinearGradientPaint(0, 0, W, 0, new float[]{0f, 0.5f, 1f},
+            new Color[]{new Color(255, 230, 180, 0), new Color(255, 245, 220, (int) (200 * pulse)), new Color(255, 230, 180, 0)}));
+        g.fillOval(0, 401, W, 6);
+        g.setPaint(new GradientPaint(cx, 404, new Color(255, 245, 220, (int) (170 * pulse)), cx, 404 - 46, new Color(255, 245, 220, 0)));
+        g.fillPolygon(new int[]{cx - 2, cx + 2, cx}, new int[]{404, 404, 404 - 46}, 3);
+        introGlow(g, cx, 404, 16, new Color(255, 255, 245), (int) (230 * pulse));
+    }
+
+    /** Your own ship gliding slowly across the sky, with a soft trail of light behind it. */
+    private void drawIntroShip(Graphics2D g, int t) {
+
         if (openingShip == null) {
             openingShip = new Player();
         }
 
-        // The title fades in and settles into place
-        float in = Math.min(1f, t / 110f);
-        Graphics2D title = (Graphics2D) g.create();
-        title.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, in));
-        // (drawTitle also draws the subtitle, under the title, so it is not drawn again here)
-        drawTitle(title, 212 - (int) (14 * (1 - in)), 70f);
-        title.dispose();
+        double run = W + 320;
+        double sx = ((t * 1.5) % run) - 160;
+        double sy = 352 + Math.sin(t * 0.03) * 10;
 
-        // Aliens drift past along the bottom of the screen, one from each rank
-        for (int i = 0; i < OPENING_ALIENS.length; i++) {
+        g.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setPaint(new GradientPaint((float) sx, (float) sy + 20, new Color(150, 220, 255, 120),
+                                     (float) sx - 170, (float) sy + 20, new Color(150, 220, 255, 0)));
+        g.drawLine((int) sx, (int) sy + 20, (int) sx - 170, (int) sy + 20);
+        g.setStroke(new BasicStroke(1f));
 
-            double speed = 0.9 + i * 0.22;
-            double ax = W + 60 - ((t * speed + i * 190) % (W + 200));
-            double ay = 392 + i * 26 + Math.sin(t * 0.03 + i * 1.7) * 10;
-
-            AlienArt.draw(g, OPENING_ALIENS[i], ax, ay, t + i * 41, false, false);
-        }
-
-        // Your ship crosses the middle of the sky, wrapping round to the start again
         openingShip.setLoadout(game.hangar);
         openingShip.animate();
-        double sx = ((t * 2.4) % (W + 160)) - 80;
-        double sy = 318 + Math.sin(t * 0.04) * 14;
         openingShip.placeAt((int) sx, (int) sy);
         openingShip.draw(g);
+    }
 
-        // The prompt blinks
-        g.setFont(UI.plain(13f));
-        g.setColor(UI.alpha(UI.TEXT, 150 + (int) (Math.sin(t * 0.08) * 90)));
-        UI.center(g, "PRESS ENTER, SPACE OR CLICK TO START", W / 2, 532);
+    /**
+     * The title: each letter falls gently into place in gold, one after another, with a
+     * flash as it lands. Then a light sweeps across the letters every few seconds, and the
+     * subtitle and a fine gold ornament appear beneath.
+     */
+    private void drawIntroTitle(Graphics2D g, int t) {
+
+        if (titleLetters == null) {
+            buildIntroTitle(g);
+        }
+
+        int top = titleBaseline - 64;
+
+        for (int i = 0; i < titleLetters.length; i++) {
+
+            double appear = clamp01((t - 40 - i * 9) / 26.0);
+            if (appear <= 0) {
+                continue;
+            }
+
+            double eased = ease(appear);
+            Graphics2D lg = (Graphics2D) g.create();
+            lg.translate(0, -(1 - eased) * 26);
+            lg.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) eased));
+            java.awt.Shape letter = titleLetters[i];
+
+            // A golden glow around the letter
+            lg.setStroke(new BasicStroke(12f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            lg.setColor(new Color(255, 190, 80, 22));
+            lg.draw(letter);
+            lg.setStroke(new BasicStroke(6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            lg.setColor(new Color(255, 200, 100, 46));
+            lg.draw(letter);
+
+            // The letter: cream at the top, warm gold, then deep amber at the bottom
+            lg.setPaint(new java.awt.LinearGradientPaint(0, top, 0, titleBaseline + 4,
+                new float[]{0f, 0.5f, 1f},
+                new Color[]{new Color(255, 250, 230), new Color(250, 208, 110), new Color(200, 130, 40)}));
+            lg.fill(letter);
+            lg.setStroke(new BasicStroke(1.2f));
+            lg.setColor(new Color(255, 240, 200, 210));
+            lg.draw(letter);
+
+            // A flash as it lands
+            double since = (t - 40 - i * 9 - 26) / 14.0;
+            if (since >= 0 && since < 1) {
+                lg.setColor(new Color(255, 255, 255, (int) (200 * (1 - since))));
+                lg.fill(letter);
+            }
+            lg.dispose();
+        }
+
+        // A light sweeping across the letters every few seconds
+        if (t > 150) {
+            double phase = ((t - 150) % 260) / 110.0;
+            if (phase < 1.0) {
+                int bx = (int) (-140 + phase * (W + 280));
+                Graphics2D sg = (Graphics2D) g.create();
+                sg.clip(titleShape);
+                sg.setPaint(new GradientPaint(bx - 60, 0, new Color(255, 255, 255, 0), bx, 0, new Color(255, 255, 255, 190), true));
+                sg.fillPolygon(new int[]{bx - 70, bx + 10, bx + 70, bx - 10}, new int[]{titleBaseline + 10, titleBaseline + 10, top - 10, top - 10}, 4);
+                sg.dispose();
+            }
+        }
+
+        // The subtitle, with gold lines reaching out on either side
+        double sub = clamp01((t - 125) / 40.0);
+        if (sub > 0) {
+            int sy = titleBaseline + 48;
+            g.setFont(UI.bold(15f));
+            g.setColor(new Color(228, 234, 255, (int) (240 * sub)));
+            UI.tracked(g, Story.SUBTITLE, W / 2, sy, 9f);
+            int half = UI.trackedWidth(g, Story.SUBTITLE, 9f) / 2;
+            int reach = (int) (80 * ease(sub));
+            g.setPaint(new GradientPaint(W / 2 - half - 18, 0, new Color(240, 200, 110, 220), W / 2 - half - 18 - reach, 0, new Color(240, 200, 110, 0)));
+            g.fillRect(W / 2 - half - 18 - reach, sy - 5, reach, 1);
+            g.setPaint(new GradientPaint(W / 2 + half + 18, 0, new Color(240, 200, 110, 220), W / 2 + half + 18 + reach, 0, new Color(240, 200, 110, 0)));
+            g.fillRect(W / 2 + half + 18, sy - 5, reach, 1);
+        }
+
+        // A fine ornament: a diamond between two hairlines, with a dot at each end
+        double orn = clamp01((t - 150) / 40.0);
+        if (orn > 0) {
+            int oy = titleBaseline + 74;
+            int a = (int) (220 * orn);
+            int len = (int) (110 * ease(orn));
+            g.setPaint(new GradientPaint(W / 2 - 12, 0, new Color(240, 200, 110, a), W / 2 - 12 - len, 0, new Color(240, 200, 110, 0)));
+            g.fillRect(W / 2 - 12 - len, oy, len, 1);
+            g.setPaint(new GradientPaint(W / 2 + 12, 0, new Color(240, 200, 110, a), W / 2 + 12 + len, 0, new Color(240, 200, 110, 0)));
+            g.fillRect(W / 2 + 12, oy, len, 1);
+            introDiamond(g, W / 2, oy, 5, new Color(250, 214, 130, a));
+            introDiamond(g, W / 2, oy, 2, new Color(255, 250, 230, a));
+        }
+    }
+
+    /** Lays out the title's letters once: big, gold, letter-spaced and centred. */
+    private void buildIntroTitle(Graphics2D g) {
+
+        java.awt.Font font = UI.bold(84f);
+        java.awt.font.FontRenderContext frc = g.getFontRenderContext();
+        String title = Story.TITLE;
+        float tracking = 84f * 0.2f;
+
+        java.awt.font.GlyphVector[] glyphs = new java.awt.font.GlyphVector[title.length()];
+        double total = 0;
+        for (int i = 0; i < title.length(); i++) {
+            glyphs[i] = font.createGlyphVector(frc, String.valueOf(title.charAt(i)));
+            total += glyphs[i].getGlyphMetrics(0).getAdvance();
+        }
+        total += tracking * (title.length() - 1);
+
+        titleBaseline = 236;
+        titleLetters = new java.awt.Shape[title.length()];
+        titleShape = new java.awt.geom.Area();
+        double x = W / 2.0 - total / 2.0;
+
+        for (int i = 0; i < title.length(); i++) {
+            titleLetters[i] = glyphs[i].getOutline((float) x, titleBaseline);
+            titleShape.add(new java.awt.geom.Area(titleLetters[i]));
+            x += glyphs[i].getGlyphMetrics(0).getAdvance() + tracking;
+        }
     }
 
     private static String capitalize(String text) {
@@ -733,6 +1238,256 @@ final class Screens {
 
     private static String modeName(GamePanel.GameMode mode) {
         return capitalize(mode.name());
+    }
+
+    // ===============================================================
+    // THE TITLE CARD (before a mission, a Level or Hardcore)
+    // ===============================================================
+
+    /**
+     * What you are about to play, over the mission's own scenery: the mode, the title
+     * spreading out in big letters, the objective, then where you are going, the bosses
+     * and your ship. Letterbox bars frame it, and at the end the title zooms through and
+     * the card opens into the battle waiting behind it.
+     */
+    private void drawTitleCard(Graphics2D g) {
+
+        int t = game.cardTimer;
+        int opensAt = GamePanel.CARD_TICKS - GamePanel.CARD_OUT;
+        double leave = ease(clamp01((t - opensAt) / (double) GamePanel.CARD_OUT));
+        Color accent = cardAccent();
+
+        // As it opens, the battle shows through from underneath
+        if (leave > 0) {
+            drawGameplay(g);
+        }
+
+        Graphics2D c = (Graphics2D) g.create();
+        c.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (1 - leave)));
+
+        // Darken the scenery, more round the edges
+        c.setColor(new Color(4, 6, 16, 150));
+        c.fillRect(0, 0, W, H);
+        c.setPaint(new RadialGradientPaint(new Point2D.Float(W / 2f, 280), 460, new float[]{0f, 1f},
+            new Color[]{new Color(0, 0, 0, 0), new Color(0, 0, 0, 150)}));
+        c.fillRect(0, 0, W, H);
+
+        String[] text = titleCardText();
+
+        // The title's size: as big as fits, its letters spreading apart as it fades in
+        double in = ease(clamp01((t - 16) / 44.0));
+        float size = 52f;
+        float tracking = (float) (3 + 9 * in);
+        c.setFont(UI.bold(size));
+        while (size > 24 && UI.trackedWidth(c, text[1], 12f) > 720) {
+            size -= 2;
+            c.setFont(UI.bold(size));
+        }
+        int titleHalf = UI.trackedWidth(c, text[1], tracking) / 2;
+
+        // A soft glow behind the title, and light streaming out from either side of it
+        double streak = ease(clamp01((t - 6) / 30.0));
+        Graphics2D eg = (Graphics2D) c.create();
+        eg.translate(W / 2.0, 250);
+        eg.scale(1.0, 0.24);
+        eg.setPaint(new RadialGradientPaint(new Point2D.Float(0, 0), 330, new float[]{0f, 1f},
+            new Color[]{UI.alpha(accent, (int) (80 * streak)), UI.alpha(accent, 0)}));
+        eg.fillOval(-330, -330, 660, 660);
+        eg.dispose();
+
+        int reach = (int) ((W / 2 - titleHalf - 18) * streak);
+        int edge = titleHalf + 18;
+        c.setPaint(new GradientPaint(W / 2f - edge, 0, new Color(255, 255, 255, (int) (210 * streak)), W / 2f - edge - reach, 0, UI.alpha(accent, 0)));
+        c.fillRect(W / 2 - edge - reach, 249, Math.max(1, reach), 2);
+        c.setPaint(new GradientPaint(W / 2f + edge, 0, new Color(255, 255, 255, (int) (210 * streak)), W / 2f + edge + reach, 0, UI.alpha(accent, 0)));
+        c.fillRect(W / 2 + edge, 249, Math.max(1, reach), 2);
+
+        // The kicker: which mode, small and spaced out
+        double kick = clamp01((t - 10) / 24.0);
+        c.setFont(UI.bold(13f));
+        c.setColor(UI.alpha(accent, (int) (255 * kick)));
+        UI.tracked(c, text[0], W / 2, 200 - (int) (8 * (1 - ease(kick))), 5f);
+
+        // The title, zooming through at the end
+        Graphics2D tg = (Graphics2D) c.create();
+        double zoom = 1.0 + 0.35 * leave;
+        tg.translate(W / 2.0, 250);
+        tg.scale(zoom, zoom);
+        tg.translate(-W / 2.0, -250);
+        tg.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (in * (1 - leave))));
+        tg.setFont(UI.bold(size));
+        UI.title(tg, text[1], W / 2, 268, tracking, Color.WHITE, UI.mix(accent, Color.WHITE, 0.55), 4);
+        tg.dispose();
+
+        // A fine line under it, drawing outwards from the middle
+        double line = ease(clamp01((t - 40) / 30.0));
+        int lw = (int) (190 * line);
+        c.setPaint(new GradientPaint(W / 2f, 0, UI.alpha(accent, 230), W / 2f - lw, 0, UI.alpha(accent, 0)));
+        c.fillRect(W / 2 - lw, 288, lw, 1);
+        c.setPaint(new GradientPaint(W / 2f, 0, UI.alpha(accent, 230), W / 2f + lw, 0, UI.alpha(accent, 0)));
+        c.fillRect(W / 2, 288, lw, 1);
+        introDiamond(c, W / 2, 288, 3, UI.alpha(accent, (int) (255 * line)));
+
+        // The objective
+        double goal = clamp01((t - 50) / 30.0);
+        c.setFont(UI.plain(16f));
+        c.setColor(new Color(230, 236, 255, (int) (235 * goal)));
+        UI.center(c, text[2], W / 2, 322);
+
+        // Where you are going, the bosses, and your ship
+        double info = clamp01((t - 78) / 30.0);
+        if (info > 0) {
+            Graphics2D ig = (Graphics2D) c.create();
+            ig.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) (info * (1 - leave))));
+            ig.translate(0, (int) (10 * (1 - ease(info))));
+            drawCardChips(ig, accent);
+            ig.dispose();
+        }
+
+        c.dispose();
+
+        // Letterbox bars: they slide in at the start and open out as the battle begins
+        int bar = (int) (64 * ease(clamp01(t / 22.0)) * (1 - leave));
+        g.setColor(Color.BLACK);
+        g.fillRect(0, 0, W, bar);
+        g.fillRect(0, H - bar, W, bar);
+
+        if (bar > 20) {
+            // A thin line along the bottom bar fills up until the battle begins, and how to skip
+            double until = clamp01(t / (double) opensAt);
+            g.setColor(new Color(255, 255, 255, 30));
+            g.fillRect(0, H - bar, W, 1);
+            g.setColor(UI.alpha(accent, 200));
+            g.fillRect(0, H - bar, (int) (W * until), 1);
+            g.setFont(UI.plain(11f));
+            g.setColor(new Color(180, 190, 220, (int) (200 * clamp01((t - 30) / 30.0) * (1 - leave))));
+            UI.center(g, "Press Enter to start now", W / 2, H - bar / 2 + 4);
+        }
+
+        // It comes up out of black
+        if (t < 14) {
+            g.setColor(new Color(0, 0, 0, (int) (255 * (1 - t / 14.0))));
+            g.fillRect(0, 0, W, H);
+        }
+    }
+
+    /** The card's colour: cyan for the Adventure, red for Hardcore, and each Level's own colour. */
+    private Color cardAccent() {
+
+        if (game.selectedMode == GamePanel.GameMode.HARDCORE) {
+            return UI.RED;
+        }
+
+        if (game.selectedMode == GamePanel.GameMode.LEVEL) {
+            Color[] colours = {UI.GREEN, UI.GOLD, UI.RED};
+            return colours[game.selectedDifficulty.ordinal()];
+        }
+
+        return UI.CYAN;
+    }
+
+    /** The kicker (which mode), the title, and the objective. */
+    private String[] titleCardText() {
+
+        Mission m = game.mission;
+
+        if (game.selectedMode == GamePanel.GameMode.HARDCORE || m == null) {
+            return new String[]{"HARDCORE  ·  ENDLESS", "ENDLESS SURVIVAL", "Survive the waves. A boss arrives every few waves."};
+        }
+
+        if (game.selectedMode == GamePanel.GameMode.LEVEL) {
+            return new String[]{"LEVEL MODE  ·  ENDLESS", m.name, "Survive as long as you can: every round is faster and tougher."};
+        }
+
+        String goal = (m.objective == Mission.Objective.SURVIVE)
+            ? "Survive " + m.target + " seconds"
+            : "Destroy " + m.target + " aliens";
+
+        if (m.bosses.size() == 1) {
+            goal += (m.objective == Mission.Objective.SURVIVE ? ", then face the " : ", then defeat the ")
+                  + capitalizeWords(m.bosses.get(0).name);
+        } else if (m.bosses.size() > 1) {
+            goal += " and defeat " + m.bosses.size() + " bosses";
+        }
+
+        return new String[]{"MISSION " + game.missionNumber + " OF " + Mission.CAMPAIGN.length, m.name, goal + "."};
+    }
+
+    /** The chips under the objective: where you are going, the bosses (or the best), and your ship. */
+    private void drawCardChips(Graphics2D g, Color accent) {
+
+        Mission m = game.mission;
+        Upgrades ship = game.upgrades;
+        List<Object[]> chips = new ArrayList<>();
+
+        chips.add(new Object[]{UI.Icon.PLANET, sceneName(game.currentScene())});
+
+        if (game.selectedMode == GamePanel.GameMode.HARDCORE || m == null) {
+            int best = game.bestFor("hardcore");
+            chips.add(new Object[]{UI.Icon.STAR, best > 0 ? "Best " + fmt(best) : "No record yet"});
+        } else if (game.selectedMode == GamePanel.GameMode.LEVEL) {
+            chips.add(new Object[]{UI.Icon.TARGET, m.target + " aliens a round"});
+            int best = game.bestFor(game.scoreKey() + "_round");
+            chips.add(new Object[]{UI.Icon.STAR, best > 0 ? "Best: round " + best : "First run"});
+        } else {
+            for (Mission.BossSpec spec : m.bosses) {
+                chips.add(new Object[]{UI.Icon.SKULL, capitalizeWords(spec.name)});
+            }
+        }
+
+        chips.add(new Object[]{UI.Icon.SHIP, capitalize(ship.getShipClass()) + "  ·  Lv " + ship.playerLevel()
+                                             + "  ·  " + (GamePanel.START_LIVES + ship.getHullLevel()) + " lives"});
+
+        // Lay them out in rows, centred, wrapping if they do not fit
+        g.setFont(UI.bold(12f));
+        int y = 350;
+        int i = 0;
+        while (i < chips.size()) {
+            int rowWidth = 0;
+            int j = i;
+            while (j < chips.size()) {
+                int w = UI.width(g, (String) chips.get(j)[1]) + 46;
+                if (j > i && rowWidth + 10 + w > 700) {
+                    break;
+                }
+                rowWidth += (j > i ? 10 : 0) + w;
+                j++;
+            }
+            int x = W / 2 - rowWidth / 2;
+            for (int k = i; k < j; k++) {
+                String label = (String) chips.get(k)[1];
+                int w = UI.width(g, label) + 46;
+                g.setColor(new Color(10, 14, 32, 190));
+                g.fillRoundRect(x, y, w, 30, 30, 30);
+                g.setColor(UI.alpha(accent, 120));
+                g.drawRoundRect(x, y, w, 30, 30, 30);
+                UI.icon(g, (UI.Icon) chips.get(k)[0], x + 18, y + 15, 12, accent);
+                g.setFont(UI.bold(12f));
+                g.setColor(new Color(235, 240, 255));
+                g.drawString(label, x + 32, y + 20);
+                x += w + 10;
+            }
+            y += 40;
+            i = j;
+        }
+
+        // At the top player level the run is harder: say so
+        if (game.maxLevelRun) {
+            g.setFont(UI.bold(11f));
+            int bw = UI.width(g, "MAX LEVEL: HARDER") + 12;
+            UI.badge(g, "MAX LEVEL: HARDER", W / 2 - bw / 2, y + 2, UI.RED);
+        }
+    }
+
+    private static String sceneName(SpaceBackground.Scene scene) {
+        switch (scene) {
+            case EARTH:      return "Earth orbit";
+            case DEEP_SPACE: return "Deep space";
+            case MOTHERSHIP: return "The alien mothership";
+            case WORMHOLE:   return "The wormhole";
+            case BLACK_HOLE: return "The black hole";
+            default:         return "Open space";
+        }
     }
 
     // ===============================================================

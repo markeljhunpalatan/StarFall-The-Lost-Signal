@@ -119,6 +119,7 @@ public class GamePanel extends JPanel {
 
     enum GameState {
         OPENING,        // the title screen the game starts on
+        LAUNCH,         // from the title screen to the lobby: your ship jumps to hyperspace (see Screens.drawLaunch)
         MENU,
         MODE_SELECT,
         DIFFICULTY_SELECT,
@@ -126,6 +127,7 @@ public class GamePanel extends JPanel {
         INSTRUCTIONS,
         ACHIEVEMENTS,
         PROGRESS,       // the pilot level screen: the level bar and every quest (see Screens.drawProgress)
+        TITLE_CARD,     // before a run: what you are about to play, then it opens into the battle (see Screens.drawTitleCard)
         STORY,
         UPGRADE,        // the hangar (from the menu) and the upgrade station (between fights)
         PLAYING,
@@ -399,6 +401,24 @@ public class GamePanel extends JPanel {
     int bossReward = 0;                 // credits for the boss on screen
     int nextBossIndex = 0;              // which boss of the mission (or of this Level round) comes next
 
+    // The launch from the title screen to the lobby, about 2.7 seconds: your ship swoops in
+    // and charges (until JUMP), rockets into hyperspace (until FLASH), the lobby's galaxy
+    // appears and the lobby slides together (from ASSEMBLE), and the ship lands on its
+    // stand (at LAND). Enter, Space or a click skips it.
+    static final int LAUNCH_JUMP = 34;
+    static final int LAUNCH_FLASH = 74;
+    static final int LAUNCH_ASSEMBLE = 96;
+    static final int LAUNCH_LAND = 140;
+    static final int LAUNCH_TICKS = 160;
+    int launchTimer = 0;
+    int launchFrame = 0;                // the frame Enter was pressed on (where the ship was then)
+
+    // The title card before each run (a mission, a Level or Hardcore): about three and a half
+    // seconds, the last part opening into the battle. Enter, Space or a click skips ahead.
+    static final int CARD_TICKS = 210;
+    static final int CARD_OUT = 36;
+    int cardTimer = 0;
+
     // The pilot level screen: which ship it shows (0 Adventure, 1 Hardcore, 2 - 4 the Easy, Moderate
     // and Hard Level ships), and the screen BACK returns to (the main menu, or the pause screen)
     int progressShip = 0;
@@ -579,6 +599,11 @@ public class GamePanel extends JPanel {
 
         loadSaveData();
         loadMenuBackground();
+
+        // The lobby's galaxy is made in the background while the intro plays
+        Thread galaxy = new Thread(LobbyBackdrop::prepare, "lobby-galaxy");
+        galaxy.setDaemon(true);
+        galaxy.start();
         initializeGameObjects();
 
         setupControls();
@@ -602,8 +627,8 @@ public class GamePanel extends JPanel {
             background.update();
             updateExplosions();
 
-            if (currentState == GameState.UPGRADE || currentState == GameState.MENU) {
-                previewPlayer.animate();
+            if (currentState == GameState.UPGRADE || currentState == GameState.MENU || currentState == GameState.LAUNCH) {
+                previewPlayer.animate();            // its engines flicker (in the launch too, as it flies to the lobby)
             }
 
             if (currentState == GameState.UPGRADE) {
@@ -612,6 +637,10 @@ public class GamePanel extends JPanel {
 
             if (currentState == GameState.STORY) {
                 storyChars += 0.9;
+            } else if (currentState == GameState.TITLE_CARD) {
+                updateTitleCard();
+            } else if (currentState == GameState.LAUNCH) {
+                updateLaunch();
             } else if (currentState == GameState.PLAYING) {
                 updateGame();
             } else if (currentState == GameState.WARP) {
@@ -685,6 +714,7 @@ public class GamePanel extends JPanel {
 
             case PLAYING:
             case PAUSED:
+            case TITLE_CARD:
                 track = battleTrack();
                 break;
 
@@ -699,6 +729,10 @@ public class GamePanel extends JPanel {
 
             case OPENING:
                 track = SoundManager.Track.INTRO;     // the intro screen has its own theme (Deep Space)
+                break;
+
+            case LAUNCH:
+                track = (launchTimer < LAUNCH_FLASH) ? SoundManager.Track.INTRO : SoundManager.Track.MENU;
                 break;
 
             case STORY:
@@ -941,6 +975,61 @@ public class GamePanel extends JPanel {
         return names[index];
     }
 
+    // ---------- The launch from the title screen to the lobby ----------
+
+    void startLaunch() {
+        launchTimer = 0;
+        launchFrame = frame;
+        currentState = GameState.LAUNCH;
+    }
+
+    void updateLaunch() {
+
+        launchTimer++;
+
+        if (launchTimer == LAUNCH_JUMP) {
+            sound.play(SoundManager.Sfx.BOOST);         // the whoosh of the jump to hyperspace
+        }
+
+        if (launchTimer >= LAUNCH_TICKS) {
+            currentState = GameState.MENU;
+        }
+    }
+
+    /** Enter, Space or a click during the launch: straight to the lobby. */
+    void skipLaunch() {
+        currentState = GameState.MENU;
+    }
+
+    // ---------- The title card before a run ----------
+
+    /** Shows what you are about to play. The battle is ready behind it and waits until it opens. */
+    void showTitleCard() {
+
+        cardTimer = 0;
+        bannerTimer = 0;            // the card says it all: no banner over the battle as well
+        shooting = false;
+        currentState = GameState.TITLE_CARD;
+    }
+
+    /** One frame of the card. When it has finished opening, the battle begins. */
+    void updateTitleCard() {
+
+        cardTimer++;
+
+        if (cardTimer >= CARD_TICKS) {
+            currentState = GameState.PLAYING;
+        }
+    }
+
+    /** Enter, Space or a click: skip straight to the card opening into the battle. */
+    void skipTitleCard() {
+
+        if (cardTimer < CARD_TICKS - CARD_OUT) {
+            cardTimer = CARD_TICKS - CARD_OUT - 1;
+        }
+    }
+
     /** True during a LEVEL run, which goes on in rounds until the ship is destroyed. */
     boolean endlessLevel() {
         return selectedMode == GameMode.LEVEL && mission != null;
@@ -1091,7 +1180,7 @@ public class GamePanel extends JPanel {
 
         refreshPlayerLoadout();
 
-        currentState = GameState.PLAYING;
+        showTitleCard();
         requestFocusInWindow();
     }
 
@@ -1205,7 +1294,7 @@ public class GamePanel extends JPanel {
 
         background.setScene(m.scene);
 
-        currentState = GameState.PLAYING;
+        showTitleCard();
         requestFocusInWindow();
     }
 
@@ -1971,8 +2060,12 @@ public class GamePanel extends JPanel {
         bind("pressed SPACE",  () -> {
             if (currentState == GameState.PLAYING) {
                 shooting = true;
+            } else if (currentState == GameState.TITLE_CARD) {
+                skipTitleCard();
             } else if (currentState == GameState.OPENING) {
-                currentState = GameState.MENU;
+                startLaunch();
+            } else if (currentState == GameState.LAUNCH) {
+                skipLaunch();
             } else if (currentState == GameState.WARP) {
                 finishWarp();
             }
@@ -2109,7 +2202,11 @@ public class GamePanel extends JPanel {
         switch (currentState) {
 
             case OPENING:
-                currentState = GameState.MENU;
+                startLaunch();
+                break;
+
+            case LAUNCH:
+                skipLaunch();
                 break;
 
             case MENU:
@@ -2132,6 +2229,10 @@ public class GamePanel extends JPanel {
 
             case PROGRESS:
                 closeProgress();
+                break;
+
+            case TITLE_CARD:
+                skipTitleCard();
                 break;
 
             case STORY:
@@ -2173,6 +2274,7 @@ public class GamePanel extends JPanel {
         switch (currentState) {
 
             case OPENING:
+            case LAUNCH:
                 currentState = GameState.MENU;
                 break;
 
@@ -2186,6 +2288,10 @@ public class GamePanel extends JPanel {
 
             case PROGRESS:
                 closeProgress();
+                break;
+
+            case TITLE_CARD:
+                skipTitleCard();
                 break;
 
             case DIFFICULTY_SELECT:
@@ -2307,10 +2413,13 @@ public class GamePanel extends JPanel {
             return;
         }
 
-        // Any click on the opening screen goes on to the menu
+        // A click on the title screen launches the ship to the lobby; another click skips the launch
         if (currentState == GameState.OPENING) {
-            sound.play(SoundManager.Sfx.CLICK);
-            currentState = GameState.MENU;
+            startLaunch();
+            return;
+        }
+        if (currentState == GameState.LAUNCH) {
+            skipLaunch();
             return;
         }
 
@@ -2423,6 +2532,10 @@ public class GamePanel extends JPanel {
                 if (HELP_BACK_BUTTON.contains(x, y)) {
                     currentState = GameState.MENU;
                 }
+                break;
+
+            case TITLE_CARD:
+                skipTitleCard();            // click anywhere to start now
                 break;
 
             case PROGRESS:
