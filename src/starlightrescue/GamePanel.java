@@ -181,12 +181,16 @@ public class GamePanel extends JPanel {
     // ---------- Buttons (all screen positions in one place) ----------
 
     // Main menu
-    static final Rectangle PLAY_BUTTON = new Rectangle(300, 232, 200, 44);
-    static final Rectangle HANGAR_BUTTON = new Rectangle(300, 280, 200, 44);
-    static final Rectangle QUESTS_BUTTON = new Rectangle(300, 328, 200, 44);
-    static final Rectangle ACHIEVEMENTS_BUTTON = new Rectangle(300, 376, 200, 44);
-    static final Rectangle SETTINGS_BUTTON = new Rectangle(300, 424, 200, 44);
-    static final Rectangle HOWTO_BUTTON = new Rectangle(300, 472, 200, 44);
+    // Main menu (the lobby): your ship on the left, a big PLAY and five tiles on the right
+    static final Rectangle PLAY_BUTTON = new Rectangle(324, 136, 452, 92);
+    static final Rectangle HANGAR_BUTTON = new Rectangle(324, 240, 144, 104);
+    static final Rectangle QUESTS_BUTTON = new Rectangle(478, 240, 144, 104);
+    static final Rectangle ACHIEVEMENTS_BUTTON = new Rectangle(632, 240, 144, 104);
+    static final Rectangle SETTINGS_BUTTON = new Rectangle(324, 354, 221, 60);
+    static final Rectangle HOWTO_BUTTON = new Rectangle(555, 354, 221, 60);
+    // The arrows either side of the ship's name: show another ship (Adventure, Hardcore, Easy, Moderate, Hard)
+    static final Rectangle LOBBY_SHIP_PREV = new Rectangle(36, 150, 30, 30);
+    static final Rectangle LOBBY_SHIP_NEXT = new Rectangle(262, 150, 30, 30);
 
     // The pilot level screen: one tab per ship (each levels up on its own), and the button on the pause screen
     static final Rectangle[] PROGRESS_SHIP_TABS = {
@@ -899,6 +903,23 @@ public class GamePanel extends JPanel {
 
     void closeProgress() {
         currentState = progressReturn;
+    }
+
+    /**
+     * The lobby's arrows: the next (or previous) ship of the five, Adventure, Hardcore and
+     * the Easy, Moderate and Hard Level ships. The hangar then opens on that ship too.
+     */
+    void cycleLobbyShip(int step) {
+
+        int index = (hangarMode == GameMode.LEVEL) ? 2 + hangarDifficulty.ordinal()
+                  : (hangarMode == GameMode.HARDCORE ? 1 : 0);
+        index = Math.floorMod(index + step, 5);
+
+        if (index < 2) {
+            setHangarShip(SHIP_MODES[index], hangarDifficulty);
+        } else {
+            setHangarShip(GameMode.LEVEL, Difficulty.values()[index - 2]);
+        }
     }
 
     /** Shows another ship's level (just to look: the ship in use does not change). */
@@ -1911,6 +1932,9 @@ public class GamePanel extends JPanel {
                     helpPage = Math.max(0, helpPage - 1);
                 } else if (currentState == GameState.PROGRESS) {
                     showProgressShip(progressShip - 1);
+                } else if (currentState == GameState.MENU) {
+                    cycleLobbyShip(-1);                     // the arrow keys pick the lobby's ship
+                    sound.play(SoundManager.Sfx.CLICK);
                 } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() > 0) {
                     spawnRate = spawnRate.previous();      // the arrow keys change the spawn amount (stopping at FEW)
                     saveProgress();
@@ -1928,6 +1952,9 @@ public class GamePanel extends JPanel {
                     helpPage = Math.min(2, helpPage + 1);
                 } else if (currentState == GameState.PROGRESS) {
                     showProgressShip(progressShip + 1);
+                } else if (currentState == GameState.MENU) {
+                    cycleLobbyShip(1);
+                    sound.play(SoundManager.Sfx.CLICK);
                 } else if (currentState == GameState.SETTINGS && spawnRate.ordinal() < SpawnRate.values().length - 1) {
                     spawnRate = spawnRate.next();          // (stopping at MANY)
                     saveProgress();
@@ -2303,6 +2330,10 @@ public class GamePanel extends JPanel {
                     openHangarFromMenu();
                 } else if (QUESTS_BUTTON.contains(x, y)) {
                     openProgress(GameState.MENU);
+                } else if (LOBBY_SHIP_PREV.contains(x, y)) {
+                    cycleLobbyShip(-1);
+                } else if (LOBBY_SHIP_NEXT.contains(x, y)) {
+                    cycleLobbyShip(1);
                 } else if (ACHIEVEMENTS_BUTTON.contains(x, y)) {
                     currentState = GameState.ACHIEVEMENTS;
                 } else if (SETTINGS_BUTTON.contains(x, y)) {
@@ -2488,7 +2519,8 @@ public class GamePanel extends JPanel {
 
         switch (currentState) {
             case MENU:
-                return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, QUESTS_BUTTON, ACHIEVEMENTS_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON};
+                return new Rectangle[]{PLAY_BUTTON, HANGAR_BUTTON, QUESTS_BUTTON, ACHIEVEMENTS_BUTTON, SETTINGS_BUTTON, HOWTO_BUTTON,
+                                       LOBBY_SHIP_PREV, LOBBY_SHIP_NEXT};
             case ACHIEVEMENTS: {
                 Rectangle[] list = Arrays.copyOf(ACHIEVEMENT_TILES, ACHIEVEMENT_TILES.length + 1);
                 list[ACHIEVEMENT_TILES.length] = HELP_BACK_BUTTON;

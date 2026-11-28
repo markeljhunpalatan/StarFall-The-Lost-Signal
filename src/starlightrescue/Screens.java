@@ -286,6 +286,11 @@ final class Screens {
     // MAIN MENU
     // ===============================================================
 
+    /**
+     * The lobby. Your ship on the left, on a hologram stand, with its level, quest and
+     * credits (the arrows switch between your five ships). On the right: a big PLAY, five
+     * tiles that each show something live, and your records. Key hints along the bottom.
+     */
     private void drawMainMenu(Graphics2D g) {
 
         int t = game.frame;
@@ -299,62 +304,372 @@ final class Screens {
             g.setColor(UI.alpha(UI.CYAN, (int) (60 * (1 - phase))));
             g.drawOval(690 - r, 660 - r, r * 2, r * 2);
         }
+        g.setStroke(new BasicStroke(1f));
 
-        drawTitle(g, 150, 66f);
+        drawTitle(g, 72, 48f);
 
-        // Your ship, exactly as you have upgraded it
-        game.previewPlayer.setLoadout(game.hangar);
-        int shipY = 380 + (int) (Math.sin(t * 0.045) * 6);
+        drawLobbyShip(g, t);
+        drawPlayButton(g, t);
 
-        g.setPaint(new RadialGradientPaint(new Point2D.Float(150, 432), 90,
-            new float[]{0f, 1f}, new Color[]{UI.alpha(UI.CYAN, 70), UI.alpha(UI.CYAN, 0)}));
-        g.fillOval(60, 410, 180, 44);
+        Upgrades ship = game.hangar;
+        lobbyTile(g, GamePanel.HANGAR_BUTTON, UI.Icon.WRENCH, "HANGAR", "H", UI.GOLD,
+                  fmtShort(ship.getCredits()) + " credits", ship.purchases() + "/" + Upgrades.totalSteps() + " upgrades");
+        Quest quest = ship.currentQuest();
+        lobbyTile(g, GamePanel.QUESTS_BUTTON, UI.Icon.TARGET, "QUESTS", "Q", UI.GREEN,
+                  "Level " + ship.playerLevel(),
+                  quest == null ? "All done" : (ship.questDone() ? "Quest done" : ship.getQuestProgress() + "/" + quest.target + " this quest"));
+        lobbyTile(g, GamePanel.ACHIEVEMENTS_BUTTON, UI.Icon.STAR, "MEDALS", null, UI.ORANGE,
+                  game.achievements.unlockedCount() + " of " + Achievements.total(), game.achievements.points() + " points");
 
+        String audio = game.sound.isSoundOn() ? (game.sound.isMusicOn() ? "Sound and music on" : "Music off") : "Sound off";
+        wideTile(g, GamePanel.SETTINGS_BUTTON, UI.Icon.GEAR, "SETTINGS", null, UI.VIOLET, audio);
+        wideTile(g, GamePanel.HOWTO_BUTTON, UI.Icon.HELP, "HOW TO PLAY", "I", UI.BLUE, "Controls and tips");
+
+        drawLobbyRecords(g);
+
+        // Key hints, centred along the bottom
+        int x = 178;
+        x = keyHint(g, x, 552, "Play", "Enter") + 18;
+        x = keyHint(g, x, 552, "Hangar", "H") + 18;
+        x = keyHint(g, x, 552, "Quests", "Q") + 18;
+        x = keyHint(g, x, 552, "Help", "I") + 18;
+        keyHint(g, x, 552, "Switch ship", "< >");
+    }
+
+    /** The left card: the ship on its hologram stand, its name (with arrows), class, level, quest and credits. */
+    private void drawLobbyShip(Graphics2D g, int t) {
+
+        Upgrades ship = game.hangar;
+        int cx = 164;
+
+        UI.glass(g, 24, 136, 280, 392, 20, UI.CYAN);
+
+        // Name and the arrows to switch ship
+        g.setFont(UI.bold(9.5f));
+        g.setColor(UI.MUTED);
+        UI.tracked(g, "YOUR SHIP", cx, 162, 2f);
+        g.setFont(UI.bold(16f));
+        g.setColor(Color.WHITE);
+        UI.center(g, game.shipName(), cx, 182);
+        lobbyArrow(g, GamePanel.LOBBY_SHIP_PREV, false);
+        lobbyArrow(g, GamePanel.LOBBY_SHIP_NEXT, true);
+
+        // Which of the five ships this is
+        int ships = 5;
+        int index = (game.hangarMode == GamePanel.GameMode.LEVEL) ? 2 + game.hangarDifficulty.ordinal()
+                  : (game.hangarMode == GamePanel.GameMode.HARDCORE ? 1 : 0);
+        for (int i = 0; i < ships; i++) {
+            int dx = cx - (ships - 1) * 6 + i * 12;
+            g.setColor(i == index ? UI.CYAN : new Color(255, 255, 255, 50));
+            g.fillOval(dx - 3, 194, 6, 6);
+        }
+
+        // The hologram stand: a glowing disc, rings that rise, and a beam of light up to the ship
+        int py = 334;
+        g.setPaint(new RadialGradientPaint(new Point2D.Float(cx, py), 110,
+            new float[]{0f, 1f}, new Color[]{UI.alpha(UI.CYAN, 80), UI.alpha(UI.CYAN, 0)}));
+        g.fillOval(cx - 110, py - 26, 220, 52);
+
+        g.setPaint(new GradientPaint(cx, py, UI.alpha(UI.CYAN, 70), cx, py - 110, UI.alpha(UI.CYAN, 0)));
+        g.fillPolygon(new int[]{cx - 78, cx + 78, cx + 46, cx - 46}, new int[]{py, py, py - 110, py - 110}, 4);
+
+        g.setStroke(new BasicStroke(1.6f));
+        g.setColor(UI.alpha(UI.CYAN, 200));
+        g.drawOval(cx - 82, py - 14, 164, 28);
+        g.setColor(UI.alpha(UI.CYAN, 90));
+        g.drawOval(cx - 64, py - 10, 128, 20);
+        for (int i = 0; i < 2; i++) {
+            double phase = ((t + i * 45) % 90) / 90.0;
+            int rw = (int) (164 - 40 * phase);
+            int ry = py - (int) (70 * phase);
+            g.setColor(UI.alpha(UI.CYAN, (int) (110 * (1 - phase))));
+            g.drawOval(cx - rw / 2, ry - 8, rw, 16);
+        }
+        g.setStroke(new BasicStroke(1f));
+
+        game.previewPlayer.setLoadout(ship);
+        int shipY = 268 + (int) Math.round(Math.sin(t * 0.045) * 5);
         Graphics2D sg = (Graphics2D) g.create();
-        sg.translate(150, shipY);
-        sg.scale(1.8, 1.8);
+        sg.translate(cx, shipY);
+        sg.scale(2.0, 2.0);
         game.previewPlayer.placeAt(-30, -20);
         game.previewPlayer.draw(sg);
         sg.dispose();
 
+        // Class and upgrades
+        g.setFont(UI.bold(17f));
+        g.setColor(Color.WHITE);
+        UI.center(g, capitalize(ship.getShipClass()) + " class", cx, 378);
+        g.setFont(UI.plain(11.5f));
+        g.setColor(UI.MUTED);
+        UI.center(g, ship.purchases() + " of " + Upgrades.totalSteps() + " upgrades fitted", cx, 395);
+
+        g.setColor(new Color(255, 255, 255, 24));
+        g.fillRect(40, 408, 248, 1);
+
+        // Level: a badge, then the bar
+        g.setPaint(new GradientPaint(40, 418, UI.mix(UI.GOLD, Color.WHITE, 0.25), 40, 454, UI.mix(UI.GOLD, UI.DARK, 0.3)));
+        g.fillOval(40, 418, 36, 36);
+        g.setFont(UI.bold(8f));
+        g.setColor(UI.DARK);
+        UI.center(g, "LV", 58, 432);
         g.setFont(UI.bold(14f));
-        g.setColor(UI.TEXT);
-        UI.center(g, game.shipName() + " ship - " + capitalize(game.hangar.getShipClass()) + " class", 150, 478);
-        g.setFont(UI.plain(12f));
+        UI.center(g, String.valueOf(ship.playerLevel()), 58, 448);
+
+        g.setFont(UI.bold(12f));
+        g.setColor(Color.WHITE);
+        g.drawString("Level " + ship.playerLevel(), 86, 431);
+        g.setFont(UI.plain(10.5f));
         g.setColor(UI.MUTED);
-        UI.center(g, "Level " + game.hangar.playerLevel() + "  ·  " + game.hangar.purchases() + " of "
-                     + Upgrades.totalSteps() + " upgrades", 150, 496);
+        String xp = ship.isTopLevel() ? "top level" : ship.getXp() + " / " + Upgrades.LEVEL_XP[ship.playerLevel()] + " XP";
+        UI.right(g, xp, 288, 431);
+        drawLevelBar(g, 86, 440, 202, 7, ship, t);
 
-        // The level bar and the quest for the next level
-        drawLevelBar(g, 60, 504, 180, 5, game.hangar, game.frame);
-        drawQuestLine(g, game.hangar, 150, 524);
+        // The quest for the next level
+        Quest quest = ship.currentQuest();
+        g.setFont(UI.bold(9.5f));
+        g.setColor(UI.GOLD);
+        UI.trackedLeft(g, "QUEST", 40, 476, 1.5f);
+        if (quest == null) {
+            g.setFont(UI.plain(11.5f));
+            g.setColor(UI.GOLD);
+            g.drawString("Every level reached", 86, 476);
+        } else {
+            g.setFont(UI.plain(11.5f));
+            g.setColor(ship.questDone() ? UI.GREEN : UI.TEXT);
+            g.drawString(quest.text, 86, 476);
+            g.setFont(UI.bold(11f));
+            UI.right(g, ship.questDone() ? "done" : ship.getQuestProgress() + "/" + quest.target, 288, 476);
+            g.setColor(new Color(0, 0, 0, 110));
+            g.fillRoundRect(86, 482, 202, 4, 4, 4);
+            g.setColor(ship.questDone() ? UI.GREEN : UI.GOLD);
+            g.fillRoundRect(86, 482, (int) Math.round(202 * Math.min(1.0, ship.getQuestProgress() / (double) quest.target)), 4, 4, 4);
+        }
 
-        // Buttons
-        menuButton(g, GamePanel.PLAY_BUTTON, UI.Icon.PLAY, "PLAY", null, UI.CYAN);
-        menuButton(g, GamePanel.HANGAR_BUTTON, UI.Icon.WRENCH, "HANGAR", fmt(game.hangar.getCredits()), UI.GOLD);
-        menuButton(g, GamePanel.QUESTS_BUTTON, UI.Icon.TARGET, "QUESTS", "LV " + game.hangar.playerLevel(), UI.GREEN);
-        menuButton(g, GamePanel.ACHIEVEMENTS_BUTTON, UI.Icon.STAR, "ACHIEVEMENTS", null, UI.GOLD);
-        menuButton(g, GamePanel.SETTINGS_BUTTON, UI.Icon.GEAR, "SETTINGS", null, UI.VIOLET);
-        menuButton(g, GamePanel.HOWTO_BUTTON, UI.Icon.HELP, "HOW TO PLAY", null, UI.VIOLET);
-
-        // Footer
-        walletChip(g, 20, 540, 150, 40, 16f);
-
-        UI.glass(g, 590, 536, 194, 48, 16, UI.VIOLET);
-
-        g.setFont(UI.plain(12f));
-        g.setColor(UI.MUTED);
-        g.drawString("Adventure best", 604, 555);
-        g.drawString("Hardcore best", 604, 573);
-
+        // Credits
+        g.setColor(UI.alpha(UI.GOLD, 26));
+        g.fillRoundRect(40, 496, 248, 22, 11, 11);
+        UI.icon(g, UI.Icon.COIN, 54, 507, 11, UI.GOLD);
         g.setFont(UI.bold(13f));
         g.setColor(UI.GOLD);
-        UI.right(g, fmt(game.bestFor("adventure")), 770, 555);
-        UI.right(g, fmt(game.bestFor("hardcore")), 770, 573);
+        g.drawString(fmt(ship.getCredits()), 66, 512);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        UI.right(g, "credits", 280, 512);
+    }
 
-        g.setFont(UI.plain(12f));
-        g.setColor(UI.alpha(UI.TEXT, 150 + (int) (Math.sin(t * 0.08) * 60)));
-        UI.center(g, "Press Enter to play", W / 2, 540);
+    /** The text, cut short with "..." if it is wider than maxWidth in the current font. */
+    private static String shorten(Graphics2D g, String text, int maxWidth) {
+
+        if (UI.width(g, text) <= maxWidth) {
+            return text;
+        }
+
+        String cut = text;
+        while (cut.length() > 1 && UI.width(g, cut + "...") > maxWidth) {
+            cut = cut.substring(0, cut.length() - 1);
+        }
+
+        return cut.trim() + "...";
+    }
+
+    /** A round arrow button beside the ship's name. */
+    private void lobbyArrow(Graphics2D g, Rectangle r, boolean right) {
+
+        boolean on = hover(r);
+        g.setColor(on ? UI.alpha(UI.CYAN, 90) : new Color(255, 255, 255, 16));
+        g.fillOval(r.x, r.y, r.width, r.height);
+        g.setColor(UI.alpha(UI.CYAN, on ? 230 : 110));
+        g.drawOval(r.x, r.y, r.width, r.height);
+
+        int cx = r.x + r.width / 2;
+        int cy = r.y + r.height / 2;
+        int d = right ? 1 : -1;
+        g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(on ? Color.WHITE : UI.TEXT);
+        g.drawPolyline(new int[]{cx - 3 * d, cx + 3 * d, cx - 3 * d}, new int[]{cy - 6, cy, cy + 6}, 3);
+        g.setStroke(new BasicStroke(1f));
+    }
+
+    /** The big PLAY button: a bright panel with a light that sweeps across it now and then. */
+    private void drawPlayButton(Graphics2D g, int t) {
+
+        Rectangle r = GamePanel.PLAY_BUTTON;
+        boolean on = hover(r);
+        int lift = on ? 2 : 0;
+        int x = r.x;
+        int y = r.y - lift;
+
+        // Glow
+        int glow = (int) (40 + 30 * Math.sin(t * 0.06)) + (on ? 40 : 0);
+        for (int i = 4; i >= 1; i--) {
+            g.setColor(UI.alpha(UI.CYAN, glow / (i + 1)));
+            g.fillRoundRect(x - i * 3, y - i * 3, r.width + i * 6, r.height + i * 6, 26 + i * 6, 26 + i * 6);
+        }
+
+        java.awt.Shape panel = new java.awt.geom.RoundRectangle2D.Float(x, y, r.width, r.height, 26, 26);
+        g.setPaint(new GradientPaint(x, y, new Color(40, 200, 235), x + r.width, y + r.height, new Color(40, 90, 210)));
+        g.fill(panel);
+
+        // The light sweeping across
+        Graphics2D sg = (Graphics2D) g.create();
+        sg.clip(panel);
+        double sweep = (t % 220) / 220.0;
+        int sx = (int) (x - 120 + sweep * (r.width + 360));
+        sg.setPaint(new GradientPaint(sx - 50, y, new Color(255, 255, 255, 0), sx, y, new Color(255, 255, 255, 70)));
+        sg.fillPolygon(new int[]{sx - 70, sx, sx + 40, sx - 30}, new int[]{y + r.height, y + r.height, y, y}, 4);
+        sg.setPaint(new GradientPaint(x, y, new Color(255, 255, 255, 60), x, y + r.height / 2, new Color(255, 255, 255, 0)));
+        sg.fillRect(x, y, r.width, r.height / 2);
+        sg.dispose();
+
+        g.setStroke(new BasicStroke(1.5f));
+        g.setColor(new Color(255, 255, 255, on ? 200 : 120));
+        g.draw(panel);
+        g.setStroke(new BasicStroke(1f));
+
+        // The play symbol in a circle
+        int pcx = x + 50;
+        int pcy = y + r.height / 2;
+        g.setColor(new Color(255, 255, 255, 230));
+        g.fillOval(pcx - 26, pcy - 26, 52, 52);
+        g.setColor(new Color(30, 110, 200));
+        g.fillPolygon(new int[]{pcx - 7, pcx - 7, pcx + 13}, new int[]{pcy - 13, pcy + 13, pcy}, 3);
+
+        g.setFont(UI.bold(30f));
+        g.setColor(Color.WHITE);
+        UI.trackedLeft(g, "PLAY", x + 94, y + 48, 6f);
+        g.setFont(UI.plain(12.5f));
+        g.setColor(new Color(230, 245, 255));
+        g.drawString("Adventure, Hardcore or the endless Levels", x + 96, y + 70);
+
+        UI.keycap(g, "Enter", x + r.width - 70, y + r.height / 2 - 11);
+    }
+
+    /** A lobby tile: an icon, a name, a key, and two live lines (like your credits or medals). */
+    private void lobbyTile(Graphics2D g, Rectangle r, UI.Icon icon, String label, String key, Color accent, String main, String sub) {
+
+        boolean on = hover(r);
+        int y = r.y - (on ? 3 : 0);
+
+        if (on) {
+            for (int i = 3; i >= 1; i--) {
+                g.setColor(UI.alpha(accent, 16));
+                g.fillRoundRect(r.x - i * 2, y - i * 2, r.width + i * 4, r.height + i * 4, 22 + i * 4, 22 + i * 4);
+            }
+        }
+        UI.glass(g, r.x, y, r.width, r.height, 18, on ? accent : UI.mix(accent, UI.DARK, 0.4));
+
+        iconBadge(g, icon, r.x + 30, y + 30, 16, accent);
+        if (key != null) {
+            UI.keycap(g, key, r.x + r.width - 36, y + 12);
+        }
+
+        g.setFont(UI.bold(13f));
+        g.setColor(on ? Color.WHITE : UI.TEXT);
+        UI.trackedLeft(g, label, r.x + 16, y + 70, 1.5f);
+        g.setFont(UI.bold(11.5f));
+        g.setColor(accent);
+        g.drawString(shorten(g, main, r.width - 30), r.x + 16, y + 86);
+        g.setFont(UI.plain(10f));
+        g.setColor(UI.MUTED);
+        g.drawString(shorten(g, sub, r.width - 30), r.x + 16, y + 99);
+    }
+
+    /** A wide, short lobby tile: icon, name and one line, with an optional key on the right. */
+    private void wideTile(Graphics2D g, Rectangle r, UI.Icon icon, String label, String key, Color accent, String line) {
+
+        boolean on = hover(r);
+        int y = r.y - (on ? 3 : 0);
+
+        if (on) {
+            for (int i = 3; i >= 1; i--) {
+                g.setColor(UI.alpha(accent, 16));
+                g.fillRoundRect(r.x - i * 2, y - i * 2, r.width + i * 4, r.height + i * 4, 22 + i * 4, 22 + i * 4);
+            }
+        }
+        UI.glass(g, r.x, y, r.width, r.height, 18, on ? accent : UI.mix(accent, UI.DARK, 0.4));
+
+        iconBadge(g, icon, r.x + 32, y + r.height / 2, 16, accent);
+
+        g.setFont(UI.bold(13f));
+        g.setColor(on ? Color.WHITE : UI.TEXT);
+        UI.trackedLeft(g, label, r.x + 60, y + 27, 1.5f);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        g.drawString(line, r.x + 60, y + 44);
+
+        if (key != null) {
+            UI.keycap(g, key, r.x + r.width - 38, y + r.height / 2 - 11);
+        }
+    }
+
+    /** Records: the best Adventure and Hardcore scores, the furthest Level round, and medals by tier. */
+    private void drawLobbyRecords(Graphics2D g) {
+
+        int x = 324;
+        int y = 426;
+        int w = 452;
+        int h = 102;
+
+        g.setColor(new Color(6, 10, 26, 150));
+        g.fillRoundRect(x, y, w, h, 18, 18);
+        g.setColor(new Color(255, 255, 255, 30));
+        g.drawRoundRect(x, y, w, h, 18, 18);
+
+        g.setFont(UI.bold(9.5f));
+        g.setColor(UI.MUTED);
+        UI.trackedLeft(g, "RECORDS", x + 18, y + 22, 2f);
+
+        int bestRound = 0;
+        String roundOn = "";
+        for (GamePanel.Difficulty d : GamePanel.Difficulty.values()) {
+            int r = game.bestFor("level_" + d.name().toLowerCase() + "_round");
+            if (r > bestRound) {
+                bestRound = r;
+                roundOn = capitalize(d.name());
+            }
+        }
+
+        String[][] cells = {
+            {"Adventure", fmt(game.bestFor("adventure")), "best score"},
+            {"Hardcore", fmt(game.bestFor("hardcore")), "best score"},
+            {"Levels", bestRound > 0 ? "Round " + bestRound : "-", bestRound > 0 ? "furthest, " + roundOn : "furthest round"},
+        };
+
+        int cw = (w - 36) / 4;
+        for (int i = 0; i < cells.length; i++) {
+            int cx = x + 18 + i * cw;
+            g.setFont(UI.plain(10.5f));
+            g.setColor(UI.MUTED);
+            g.drawString(cells[i][0], cx, y + 48);
+            g.setFont(UI.bold(17f));
+            g.setColor(UI.GOLD);
+            g.drawString(cells[i][1], cx, y + 72);
+            g.setFont(UI.plain(9.5f));
+            g.setColor(UI.MUTED);
+            g.drawString(cells[i][2], cx, y + 88);
+            if (i > 0) {
+                g.setColor(new Color(255, 255, 255, 22));
+                g.fillRect(cx - 12, y + 36, 1, 54);
+            }
+        }
+
+        // Medals, by tier
+        int mx = x + 18 + 3 * cw;
+        g.setColor(new Color(255, 255, 255, 22));
+        g.fillRect(mx - 12, y + 36, 1, 54);
+        g.setFont(UI.plain(10.5f));
+        g.setColor(UI.MUTED);
+        g.drawString("Medals", mx, y + 48);
+        Achievements.Tier[] tiers = Achievements.Tier.values();
+        for (int i = 0; i < tiers.length; i++) {
+            int ty = y + 60 + i * 13;
+            g.setColor(tierColor(tiers[i]));
+            g.fillOval(mx, ty - 4, 8, 8);
+            g.setFont(UI.bold(10.5f));
+            g.setColor(UI.TEXT);
+            g.drawString(game.achievements.unlockedCount(tiers[i]) + "/" + Achievements.count(tiers[i]), mx + 14, ty + 4);
+        }
     }
 
     // ===============================================================
@@ -920,27 +1235,6 @@ final class Screens {
     private static double ease(double v) {
         v = Math.max(0, Math.min(1, v));
         return v * v * (3 - 2 * v);
-    }
-
-    private void menuButton(Graphics2D g, Rectangle r, UI.Icon icon, String label, String extra, Color accent) {
-
-        boolean hover = hover(r);
-        UI.button(g, r, "", accent, hover, true, game.frame);
-
-        int cy = r.y + r.height / 2;
-        int shift = hover ? 3 : 0;
-
-        UI.icon(g, icon, r.x + 28 + shift, cy, 16, hover ? Color.WHITE : accent);
-
-        g.setFont(UI.bold(15f));
-        g.setColor(hover ? Color.WHITE : UI.TEXT);
-        UI.trackedLeft(g, label, r.x + 52 + shift, cy + 5, 1.5f);
-
-        if (extra != null) {
-            g.setFont(UI.bold(12f));
-            g.setColor(UI.GOLD);
-            UI.right(g, extra, r.x + r.width - 16, cy + 5);
-        }
     }
 
     // ===============================================================
